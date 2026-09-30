@@ -38,9 +38,29 @@ export const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || DEFAULTS.NEXT_PUBLIC_FIREBASE_APP_ID,
 } as const;
 
+/**
+ * Next.js hanya meng-inline `process.env.NEXT_PUBLIC_*` kalau ditulis sebagai
+ * akses properti literal (`process.env.FOO`). Akses dinamis seperti
+ * `process.env[key]` TIDAK bisa di-inline, jadi ia tetap evaluate saat runtime
+ * di browser — tempat `process.env` kosong — dan hasilnya selalu `undefined`.
+ *
+ * Akibatnya `missingFirebaseVars()` versi lama melaporkan keenam variabel hilang
+ * meski env-nya lengkap, dan admin terkunci di layar "Belum Dikonfigurasi".
+ * Karena itu: baca lewat `firebaseConfig` (akses literal, ter-inline saat
+ * build), lalu lookup objek biasa itu — bukan `process.env`.
+ */
+const FIREBASE_VALUES: Record<(typeof FIREBASE_KEYS)[number], string> = {
+  NEXT_PUBLIC_FIREBASE_API_KEY: firebaseConfig.apiKey,
+  NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: firebaseConfig.authDomain,
+  NEXT_PUBLIC_FIREBASE_PROJECT_ID: firebaseConfig.projectId,
+  NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: firebaseConfig.storageBucket,
+  NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: firebaseConfig.messagingSenderId,
+  NEXT_PUBLIC_FIREBASE_APP_ID: firebaseConfig.appId,
+};
+
 /** Nama variabel Firebase yang masih kosong di env. */
 export function missingFirebaseVars(): string[] {
-  return FIREBASE_KEYS.filter((key) => !process.env[key]);
+  return FIREBASE_KEYS.filter((key) => !FIREBASE_VALUES[key]);
 }
 
 /** True hanya kalau keenam variabel Firebase terisi. */

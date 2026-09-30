@@ -168,3 +168,39 @@ Video call berlangsung langsung P2P (tidak lewat server)
 | Video | WebRTC (native browser API) |
 | PWA | next-pwa (Workbox) |
 | Deploy | Vercel / Firebase Hosting |
+
+---
+
+## Utang Teknik
+
+Catatan yang sengaja belum dikerjakan, biar tidak hilang.
+
+### Migrasi ke Tailwind
+
+Styling sekarang masih **CSS Modules + custom properties**, bukan Tailwind.
+Tidak ada `tailwindcss` di `package.json`, tidak ada `tailwind.config.js`, dan
+seluruh gaya ada di tiga file:
+
+- `src/app/globals.css` — token desain (`--accent`, `--surface`, `--shadow-*`, dll)
+- `src/app/admin/admin.module.css`
+- `src/app/receiver.module.css`
+
+Kalau nanti mau pindah ke Tailwind, urutannya:
+
+1. `npm i -D tailwindcss @tailwindcss/postcss` — Tailwind v4 tidak butuh
+   `tailwind.config.js` maupun `postcss.config.js` terpisah, cukup satu import
+   di `globals.css`.
+2. Pindahkan token `--*` ke blok `@theme`.
+3. Rewrite dua file CSS module di atas menjadi utility class di dalam JSX.
+
+Yang perlu diwaspadai: layout video memakai positioning presisi
+(`position: fixed; inset: 0` untuk layer video, dan picture-in-picture lokal di
+`bottom`/`right` tetap). Ini bisa ditulis ulang dengan utility class, tapi
+**bukan** find-replace — perhitungannya kira-kira satu sesi kerja.
+
+Sebaiknya migrasi dilakukan sekarang, sebelum halaman video makin banyak
+kondisi, bukan sesudahnya. Kalau migrasi ditunda, tidak ada yang perlu dibongkar
+— CSS Modules dan Tailwind bisa hidup berdampingan.
+
+Catatan: migrasi ke Tailwind sendiri **tidak akan membuat tampilan lebih bagus**.
+Itu soal hierarki dan proporsi, bukan tooling.

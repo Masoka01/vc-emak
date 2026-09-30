@@ -49,7 +49,11 @@
   z-index: 5;
 }
 
-.pulse {
+/* Static "listening" marker. This deliberately has no animation: the original
+   ripple rings ran forever and were the main power drain on a phone left
+   plugged in waiting for a call. The lastChecked timestamp below is what
+   communicates liveness instead. */
+.statusIcon {
   position: relative;
   width: 88px;
   height: 88px;
@@ -61,25 +65,18 @@
   color: var(--accent);
 }
 
-.ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 2px solid var(--accent);
-  opacity: 0;
-  animation: ripple 2.4s ease-out infinite;
-}
-.ring:nth-child(2) { animation-delay: 0.8s; }
-
-@keyframes ripple {
-  0%   { transform: scale(1); opacity: 0.6; }
-  100% { transform: scale(2.2); opacity: 0; }
-}
-
 .waitText {
   font-size: 15px;
-  color: var(--muted);
+  color: var(--text-dim);
   letter-spacing: 0.02em;
+  text-align: center;
+}
+
+.lastChecked {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: -12px;
 }
 
 .badge {
@@ -106,7 +103,8 @@
   font-size: 15px;
   color: var(--muted);
   z-index: 20;
-  backdrop-filter: blur(4px);
+  /* No backdrop-filter here on purpose. It forces the GPU to blur the whole
+     viewport on every frame and buys almost nothing over a solid scrim. */
 }
 
 .spinner {

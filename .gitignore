@@ -7,3 +7,6 @@ out/
 *.log
 public/sw.js
 public/workbox-*.js
+
+# artefak browser test
+.playwright-mcp/
