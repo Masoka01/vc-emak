@@ -173,34 +173,51 @@ Video call berlangsung langsung P2P (tidak lewat server)
 
 ## Utang Teknik
 
-Catatan yang sengaja belum dikerjakan, biar tidak hilang.
+Catatan yang perlu diketahui sebelum mengubah kode di sini.
 
-### Migrasi ke Tailwind
+### Styling: Tailwind v4, bukan CSS Modules
 
-Styling sekarang masih **CSS Modules + custom properties**, bukan Tailwind.
-Tidak ada `tailwindcss` di `package.json`, tidak ada `tailwind.config.js`, dan
-seluruh gaya ada di tiga file:
+Sudah migrasi dari CSS Modules ke **Tailwind v4**. `admin.module.css` dan
+`receiver.module.css` sudah dihapus; gaya sekarang inline sebagai utility class
+di dalam `page.tsx`.
 
-- `src/app/globals.css` — token desain (`--accent`, `--surface`, `--shadow-*`, dll)
-- `src/app/admin/admin.module.css`
-- `src/app/receiver.module.css`
+- Setup: `postcss.config.mjs` + satu baris `@import "tailwindcss";` di
+  `src/app/globals.css`. Tailwind v4 tidak butuh `tailwind.config.js`.
+- Token desain ada di blok `@theme` dan menghasilkan utility seperti
+  `bg-surface`, `text-ink-dim`, `border-line`, `rounded-lg`, `shadow-md`.
+- Nama token diubah saat migrasi supaya utilinya enak dibaca: yang dulunya
+  `--color-text` dan `--color-border` kini bernama `--color-ink` dan
+  `--color-line`. **Nilai warnanya tidak berubah.**
 
-Kalau nanti mau pindah ke Tailwind, urutannya:
+Tidak ada `autoprefixer` di config PostCSS. Tailwind v4 sudah menangani vendor
+prefix sendiri; mendaftarkan plugin yang tidak terpasang akan menggagalkan build.
 
-1. `npm i -D tailwindcss @tailwindcss/postcss` — Tailwind v4 tidak butuh
-   `tailwind.config.js` maupun `postcss.config.js` terpisah, cukup satu import
-   di `globals.css`.
-2. Pindahkan token `--*` ke blok `@theme`.
-3. Rewrite dua file CSS module di atas menjadi utility class di dalam JSX.
+### Aturan yang tidak boleh dilanggar
 
-Yang perlu diwaspadai: layout video memakai positioning presisi
-(`position: fixed; inset: 0` untuk layer video, dan picture-in-picture lokal di
-`bottom`/`right` tetap). Ini bisa ditulis ulang dengan utility class, tapi
-**bukan** find-replace — perhitungannya kira-kira satu sesi kerja.
+- **Jangan tambah animasi `infinite` di halaman receiver (`/`).** Ripple yang
+  looping dihapus karena baterai habis saat HP ditinggal menunggu panggilan.
+  Penanda status sengaja dibuat statik, dengan jam "terakhir diperiksa" sebagai
+  penggantinya. Spinner saat menyambungkan tetap dipakai karena hanya hidup
+  sekitar 2 detik. Kalau memang butuh animasi, pastikan sifatnya finite atau
+  hanya muncul saat ada aksi pengguna.
+- **Jangan pasang `maxLength` di input PIN.** `maxLength` memotong teks mentah
+  sebelum filter digit jalan, jadi paste `"PIN: 56028717"` hanya menghasilkan
+  `"560"`. Batas panjang sudah ditangani `.slice(0, PIN_LENGTH)` di `onChange`.
+- **Jangan akses `process.env` secara dinamis di kode client.** Next.js hanya
+  meng-inline `process.env.NEXT_PUBLIC_*` kalau ditulis sebagai akses properti
+  literal. `process.env[key]` lolos ke runtime browser, tempat `process.env`
+  kosong, dan selalu menghasilkan `undefined` — ini sempat membuat admin
+  terkunci di layar "Belum Dikonfigurasi" padahal env-nya sudah lengkap. Baca
+  lewat `src/lib/env.ts`, yang sudah mengekspor nilainya secara langsung.
 
-Sebaiknya migrasi dilakukan sekarang, sebelum halaman video makin banyak
-kondisi, bukan sesudahnya. Kalau migrasi ditunda, tidak ada yang perlu dibongkar
-— CSS Modules dan Tailwind bisa hidup berdampingan.
+### Sisa pekerjaan
 
-Catatan: migrasi ke Tailwind sendiri **tidak akan membuat tampilan lebih bagus**.
-Itu soal hierarki dan proporsi, bukan tooling.
+- **Belum ada test suite.** Semua verifikasi selama ini manual lewat browser.
+  Kalau mau menambah, titik paling berharga adalah `src/lib/session.ts`
+  (token HMAC) dan endpoint `/api/verify-pin` (rate limit + timing-safe compare).
+- **Rules Firestore belum di-deploy** di environment ini. Jalankan
+  `npm run deploy:rules`; sampai itu, signalling tetap `PERMISSION_DENIED`.
+- **Ikon PWA masih 404.** `public/icons/icon-192.png` dan sejenisnya belum
+  ada, jadi request dari service worker gagal. Tidak mengganggu halaman, tapi
+  berarti PWA belum benar-benar terpasang.
+

@@ -1,70 +1,45 @@
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+@import "tailwindcss";
 
-:root {
-  --bg:        #0a0a0f;
-  --surface:   #111118;
-  --surface-elevated: #16161f;
-  --border:    #1e1e2e;
-  --border-strong: #2a2a3e;
-  --text:      #e8e8f0;
-  --text-dim:  #9a9ab8;
-  --muted:     #5a5a78;
-  --accent:    #6c63ff;
-  --accent-dim: #2d2b6b;
-  --accent-soft: #3d3a7a;
-  --danger:    #ff4d6d;
-  --danger-dim: #4a1a25;
-  --warning:   #f5a623;
-  --warning-dim: #4a350a;
-  --green:     #22d3a5;
-  --green-dim: #0d3d30;
-  --radius:    12px;
+@theme {
+  /* Palette values are unchanged from the CSS-Modules era — only the token
+     names moved so the generated utilities read well (text-ink, border-line)
+     instead of text-text / border-border. */
+  --color-base: #0a0a0f;
+  --color-surface: #111118;
+  --color-surface-elevated: #16161f;
+  --color-line: #1e1e2e;
+  --color-line-strong: #2a2a3e;
+  --color-ink: #e8e8f0;
+  --color-ink-dim: #9a9ab8;
+  /* Was #5a5a78, which only reached 2.99:1 on --color-base — below WCAG AA for
+     body text. This is the same hue scaled up: 5.11:1 on base, 4.87:1 on
+     surface. It is used for small text ("Terakhir diperiksa", "Memeriksa
+     sesi…", the remember-me hint), so it has to clear the bar. */
+  --color-ink-muted: #7e7ea8;
+  --color-accent: #6c63ff;
+  --color-accent-dim: #2d2b6b;
+  --color-accent-soft: #3d3a7a;
+  --color-danger: #ff4d6d;
+  --color-danger-dim: #4a1a25;
+  --color-warning: #f5a623;
+  --color-warning-dim: #4a350a;
+  --color-green: #22d3a5;
+  --color-green-dim: #0d3d30;
+
+  --radius: 12px;
   --radius-lg: 20px;
-  --font:      'Inter', system-ui, sans-serif;
+
+  --font-sans: 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
-  --shadow-sm: 0 2px 8px rgba(0,0,0,0.3);
-  --shadow-md: 0 8px 32px rgba(0,0,0,0.4);
-  --shadow-lg: 0 16px 48px rgba(0,0,0,0.5);
-  --transition-fast: 120ms ease;
-  --transition-normal: 200ms ease;
-  --transition-slow: 320ms ease;
-}
 
-html, body {
-  height: 100%;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
 
-button {
-  cursor: pointer;
-  font-family: inherit;
-  border: none;
-  outline: none;
-  transition: opacity var(--transition-fast), transform var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-button:active { transform: scale(0.97); }
-button:disabled { opacity: 0.4; cursor: not-allowed; }
-button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-input {
-  font-family: inherit;
-  outline: none;
-}
-input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-video {
-  object-fit: cover;
-  background: #000;
+  /* All three are finite. Nothing on an idle screen loops — see README. */
+  --animate-spin: spin 0.8s linear infinite;
+  --animate-shake: shake 400ms ease;
+  --animate-fade-in: fadeIn 320ms ease;
 }
 
 @keyframes spin {
@@ -84,7 +59,36 @@ video {
   to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes pulseSubtle {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 1; }
+html, body {
+  height: 100%;
+  background: var(--color-base);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button {
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity 120ms ease, transform 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+button:active { transform: scale(0.97); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+input {
+  font-family: inherit;
+}
+input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+video {
+  object-fit: cover;
+  background: #000;
 }
