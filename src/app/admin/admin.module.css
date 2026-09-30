@@ -1,0 +1,215 @@
+/* ── PIN Screen ── */
+.pinRoot {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  padding: 24px;
+}
+
+.pinCard {
+  width: 100%;
+  max-width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 40px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.lockIcon {
+  width: 64px;
+  height: 64px;
+  background: var(--accent-dim);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+.pinTitle {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.pinSub {
+  font-size: 14px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.pinInput {
+  width: 100%;
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-size: 18px;
+  letter-spacing: 0.3em;
+  color: var(--text);
+  text-align: center;
+  outline: none;
+  transition: border-color 0.2s;
+  margin-top: 8px;
+}
+.pinInput:focus { border-color: var(--accent); }
+
+.pinError {
+  font-size: 13px;
+  color: var(--danger);
+}
+
+.pinBtn {
+  width: 100%;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  padding: 14px;
+  font-size: 15px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+.pinBtn:hover:not(:disabled) { opacity: 0.85; }
+
+/* ── Caller screen ── */
+.root {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.videos {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s;
+}
+.videos[data-active="true"] { opacity: 1; pointer-events: auto; }
+
+.remote {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0;
+}
+
+.local {
+  position: absolute;
+  bottom: 100px;
+  right: 16px;
+  width: 120px;
+  height: 160px;
+  border-radius: 12px;
+  border: 2px solid rgba(255,255,255,0.15);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  z-index: 10;
+}
+
+.idle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  z-index: 5;
+  padding: 24px;
+  text-align: center;
+}
+
+.callIcon {
+  width: 96px;
+  height: 96px;
+  background: var(--accent-dim);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.readyText { font-size: 24px; font-weight: 700; }
+.readySub  { font-size: 14px; color: var(--muted); max-width: 260px; }
+
+.callBtn {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 100px;
+  padding: 14px 36px;
+  font-size: 15px;
+  font-weight: 600;
+  margin-top: 8px;
+  box-shadow: 0 4px 24px rgba(108,99,255,0.4);
+}
+.callBtn:hover { opacity: 0.85; }
+
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--green);
+  background: rgba(34,211,165,0.12);
+  padding: 4px 12px;
+  border-radius: 100px;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(10,10,15,0.75);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 16px;
+  z-index: 20;
+  backdrop-filter: blur(4px);
+}
+.overlaySub { font-size: 13px; color: var(--muted); }
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 4px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.controls {
+  position: absolute;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+}
+
+.hangup {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: var(--danger);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 20px rgba(255,77,109,0.4);
+}
+
+.errorText { color: var(--danger); font-size: 15px; }
+.endedText { color: var(--muted); font-size: 15px; }

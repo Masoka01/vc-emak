@@ -1,0 +1,49 @@
+rules_version = '2';
+
+// ===========================================================================
+//  SECURITY MODEL - READ THIS FIRST
+// ===========================================================================
+//
+//  There is NO authentication on the Firestore room in this project. Video is
+//  peer-to-peer, but the SDP offer/answer and the ICE candidates travel through
+//  Firestore, so anyone who can write to this room can impersonate the caller
+//  or the receiver.
+//
+//  What actually protects the app is the room id being unguessable. If the room
+//  id leaks (shared URL, screenshot, log file), anyone can write a fake
+//  offer/answer into that room.
+//
+//  The stronger option is Firebase Auth with read/write rules based on the
+//  authenticated user. That changes the receiver flow, because the receiver
+//  would have to sign in before auto-answer works.
+//
+//  Rotating the room id means changing TWO files and redeploying the rules:
+//    1. the room id below
+//    2. NEXT_PUBLIC_ROOM_ID in .env.example / .env.local
+//  If only one of them changes, signaling is rejected entirely.
+// ===========================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // VConnect signaling room.
+    // The room id is hardcoded because Firestore rules cannot read env vars.
+    // Any other room id does not match this rule and falls through to deny.
+    match /rooms/vc-ud589l6e1gq0vc4y22tp {
+      allow read, write: if true;
+
+      // ICE candidates from the caller (admin).
+      match /callerCandidates/{candidateId} {
+        allow read, write: if true;
+      }
+
+      // ICE candidates from the receiver.
+      match /receiverCandidates/{candidateId} {
+        allow read, write: if true;
+      }
+    }
+
+    // Deliberately no catch-all match: every path not covered above is denied
+    // by Firestore by default.
+  }
+}
