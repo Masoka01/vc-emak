@@ -1,94 +1,207 @@
 @import "tailwindcss";
 
 @theme {
-  /* Palette values are unchanged from the CSS-Modules era — only the token
-     names moved so the generated utilities read well (text-ink, border-line)
-     instead of text-text / border-border. */
-  --color-base: #0a0a0f;
-  --color-surface: #111118;
-  --color-surface-elevated: #16161f;
-  --color-line: #1e1e2e;
-  --color-line-strong: #2a2a3e;
-  --color-ink: #e8e8f0;
-  --color-ink-dim: #9a9ab8;
-  /* Was #5a5a78, which only reached 2.99:1 on --color-base — below WCAG AA for
-     body text. This is the same hue scaled up: 5.11:1 on base, 4.87:1 on
-     surface. It is used for small text ("Terakhir diperiksa", "Memeriksa
-     sesi…", the remember-me hint), so it has to clear the bar. */
-  --color-ink-muted: #7e7ea8;
-  --color-accent: #6c63ff;
-  --color-accent-dim: #2d2b6b;
-  --color-accent-soft: #3d3a7a;
-  --color-danger: #ff4d6d;
-  --color-danger-dim: #4a1a25;
-  --color-warning: #f5a623;
-  --color-warning-dim: #4a350a;
-  --color-green: #22d3a5;
-  --color-green-dim: #0d3d30;
+  /* ── Flip7 brand palette (verbatim) ──
+     Kept exactly as specified. On dark surfaces the lighter steps are the
+     readable ones, so semantic tokens below carry the contrast decisions
+     rather than re-tinting the brand colours. */
+  --color-teal: #2BA8A2;
+  --color-teal-light: #3CC4BD;
+  --color-teal-dark: #1E8C86;
+  --color-teal-bg: #E8F6F5;
 
-  --radius: 12px;
-  --radius-lg: 20px;
+  --color-accent-gold: #FFD23F;
+  --color-accent-gold-light: #FFE47A;
+  --color-accent-gold-dark: #E6B800;
 
-  --font-sans: 'Inter', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --color-coral: #EF6C4A;
+  --color-coral-light: #FF8A6A;
+  --color-coral-dark: #D45233;
 
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
+  --color-cream: #FFF8E7;
+  --color-sky: #5DADE2;
 
-  /* All three are finite. Nothing on an idle screen loops — see README. */
+  --color-success: #27AE60;
+  --color-error: #EF6C4A;
+
+  /* ── Dark surfaces ──
+     Deep teal-black rather than neutral #0a0a0f, so the base sits in the
+     same hue family as the teal accents instead of fighting them. */
+  --color-surface-base: #0A1518; /* page */
+  --color-surface-card: #12262A; /* cards */
+  --color-surface-input: #0D1D20; /* form fields */
+
+  /* ── Semantic layer (contrast-checked against surface-card, L=0.0170) ── */
+  --color-bg: var(--color-surface-base);
+  --color-surface: var(--color-surface-card);
+  --color-line: #3A6F76; /* 3.03:1 on the input fill — field edges are visible */
+  --color-line-strong: #4E8B93;
+  --color-ink: #E8F6F5; /* primary text, 14.1:1 */
+  --color-ink-dim: #A8C4C2; /* secondary, 8.5:1 */
+  --color-ink-muted: #7E9A98; /* tertiary, 5.2:1 */
+
+  /* Readable teal for headings/accents on dark. The brand's teal-dark is only
+     3.85:1 here, which is below the bar for body-size text. */
+  --color-brand: #3CC4BD;
+  /* Gold is a light fill, so its label must be dark — light-on-gold is 1.6:1. */
+  --color-on-gold: #0A1518;
+  --color-on-coral: #2B0E05; /* 5.9:1, beats white-on-coral's 3.0:1 */
+
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Colored glow elevation — no black shadows on interactive elements */
+  --shadow-sm: 0 1px 6px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 3px 12px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 6px 24px rgba(0, 0, 0, 0.5);
+  --shadow-card: 0 3px 15px rgba(43, 168, 162, 0.18);
+  --shadow-teal-glow: 0 0 0 3px rgba(43, 168, 162, 0.35), 0 3px 15px rgba(43, 168, 162, 0.35);
+  --shadow-accent-glow: 0 3px 20px rgba(255, 210, 63, 0.35);
+  --shadow-coral-glow: 0 3px 20px rgba(239, 108, 74, 0.4);
+  --shadow-sky-glow: 0 3px 12px rgba(93, 173, 226, 0.3);
+  --shadow-focus: 0 0 0 3px rgba(60, 196, 189, 0.4);
+
   --animate-spin: spin 0.8s linear infinite;
   --animate-shake: shake 400ms ease;
   --animate-fade-in: fadeIn 320ms ease;
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-6px); }
-  40% { transform: translateX(6px); }
-  60% { transform: translateX(-4px); }
-  80% { transform: translateX(4px); }
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-6px);
+  }
+  40% {
+    transform: translateX(6px);
+  }
+  60% {
+    transform: translateX(-4px);
+  }
+  80% {
+    transform: translateX(4px);
+  }
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-html, body {
-  height: 100%;
-  background: var(--color-base);
-  color: var(--color-ink);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+/* These MUST live in @layer base. Unlayered rules outrank every @layer in
+   CSS, so a bare `*, *::before, *::after { padding: 0 }` silently beats
+   Tailwind's utilities and strips padding off the entire app. */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html,
+  body {
+    height: 100%;
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button {
+    cursor: pointer;
+    font-family: inherit;
+    border: none;
+    outline: none;
+    transition: opacity 120ms ease, transform 120ms ease, background-color 120ms ease,
+      box-shadow 120ms ease, color 120ms ease;
+  }
+  button:active {
+    transform: scale(0.97);
+  }
+  button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  input {
+    font-family: inherit;
+    outline: none;
+  }
+
+  input::placeholder {
+    color: color-mix(in srgb, var(--color-ink-muted) 45%, transparent);
+  }
+
+  video {
+    object-fit: cover;
+    background: #000;
+  }
 }
 
-button {
-  cursor: pointer;
-  font-family: inherit;
-  transition: opacity 120ms ease, transform 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
-}
-button:active { transform: scale(0.97); }
-button:disabled { opacity: 0.4; cursor: not-allowed; }
-button:focus-visible {
-  outline: 2px solid var(--color-accent);
+/* Focus rules stay UNLAYERED on purpose: a11y must never lose a specificity
+   fight against a utility. Outline rather than box-shadow, so it composes
+   with an element's own colored glow instead of replacing it. */
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid rgba(60, 196, 189, 0.5);
   outline-offset: 2px;
-}
-
-input {
-  font-family: inherit;
 }
 input:focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 3px solid rgba(60, 196, 189, 0.5);
   outline-offset: 2px;
 }
 
-video {
-  object-fit: cover;
-  background: #000;
+/* Custom component classes, layered so a utility can still override them. */
+@layer components {
+  /* Dashed section divider */
+  .divider-dashed {
+    border-bottom: 3px dashed var(--color-line-strong);
+  }
+
+  /* Colored left accent bar for cards — state communication */
+  .accent-bar-teal {
+    border-left: 4px solid var(--color-teal-light);
+  }
+  .accent-bar-gold {
+    border-left: 4px solid var(--color-accent-gold);
+  }
+  .accent-bar-coral {
+    border-left: 4px solid var(--color-coral);
+  }
+  .accent-bar-sky {
+    border-left: 4px solid var(--color-sky);
+  }
+
+  /* Emoji container — fixed size so it never shifts the baseline */
+  .icon-emoji {
+    width: 48px;
+    height: 48px;
+    display: grid;
+    place-items: center;
+    font-size: 24px;
+    line-height: 1;
+  }
 }

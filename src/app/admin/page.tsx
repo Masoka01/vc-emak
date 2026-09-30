@@ -29,9 +29,15 @@ interface PinError {
   retryAfter?: number;
 }
 
-const centeredPage = "flex min-h-dvh items-center justify-center bg-base px-4 py-6";
-const card = "flex w-full max-w-sm flex-col items-center gap-5 rounded-2xl border border-line bg-surface p-8 shadow-lg animate-fade-in";
-const spinner = "h-10 w-10 rounded-full border-2 border-line border-t-accent animate-spin";
+const page = "flex min-h-dvh items-center justify-center bg-surface-base px-4 py-8";
+const card =
+  "flex w-full max-w-md flex-col gap-6 rounded-xl border border-line bg-surface-card p-8 shadow-card animate-fade-in";
+const spinner =
+  "h-10 w-10 rounded-full border-2 border-teal-bg border-t-teal animate-spin";
+
+/** Gold is a light fill, so its label must be dark ink — white on #FFD23F is ~1.6:1. */
+const cta =
+  "rounded-full bg-accent-gold px-6 py-3.5 text-base font-extrabold tracking-wide text-on-gold shadow-accent-glow transition-transform hover:bg-accent-gold-light";
 
 export default function AdminPage() {
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("loading");
@@ -41,6 +47,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [retryCountdown, setRetryCountdown] = useState(0);
   const [shake, setShake] = useState(false);
+  const [showPin, setShowPin] = useState(false);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const shakeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -105,6 +112,12 @@ export default function AdminPage() {
       mounted = false;
     };
   }, []);
+
+  // Grab the field as soon as the PIN screen appears — this is the single
+  // biggest "susah ngetik" complaint: having to click the box first.
+  useEffect(() => {
+    if (sessionStatus === "unauthenticated") inputRef.current?.focus();
+  }, [sessionStatus]);
 
   // ── Firebase config check ──
   const firebaseReady = isFirebaseConfigured();
@@ -219,6 +232,7 @@ export default function AdminPage() {
     setSessionStatus("unauthenticated");
     setPin("");
     setPinError({ code: "", message: "" });
+    setShowPin(false);
   };
 
   // ── Start call ──
@@ -243,10 +257,10 @@ export default function AdminPage() {
   // Loading session check
   if (sessionStatus === "loading") {
     return (
-      <div className={centeredPage}>
+      <div className={page}>
         <div className={card}>
           <div className={spinner} aria-hidden="true" />
-          <p className="text-sm text-ink-muted">Memeriksa sesi…</p>
+          <p className="text-sm text-ink-dim">Memeriksa sesi…</p>
         </div>
       </div>
     );
@@ -255,29 +269,36 @@ export default function AdminPage() {
   // Firebase not configured
   if (!firebaseReady) {
     return (
-      <div className={centeredPage}>
+      <div className={page}>
         <div className={`${card} items-stretch`}>
-          <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-warning/15 text-warning">
+          <div className="mx-auto grid h-16 w-16 place-items-center rounded-lg bg-coral/15 text-coral-dark shadow-coral-glow">
             <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
               <circle cx="12" cy="12" r="10" />
               <line x1="12" y1="8" x2="12" y2="12" />
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
           </div>
-          <h1 className="text-center text-xl font-semibold text-ink">Belum Dikonfigurasi</h1>
+          <h1 className="text-center text-2xl font-extrabold tracking-tight text-brand">
+            Belum Dikonfigurasi
+          </h1>
           <p className="text-center text-sm text-ink-dim">
             Variabel lingkungan Firebase berikut belum disetel:
           </p>
-          <ul className="space-y-1.5">
+          <ul className="space-y-2">
             {missingVars.map((v) => (
-              <li key={v} className="rounded-lg border border-warning/20 bg-warning/5 px-3 py-2 font-mono text-xs text-warning">
+              <li
+                key={v}
+                className="accent-bar-coral rounded-md bg-coral/10 px-3 py-2 font-mono text-sm text-coral-light"
+              >
                 {v}
               </li>
             ))}
           </ul>
           <p className="text-center text-xs leading-relaxed text-ink-muted">
             Tambahkan variabel tersebut ke{" "}
-            <code className="rounded bg-surface-elevated px-1 py-0.5 font-mono text-ink-dim">.env.local</code>{" "}
+            <code className="rounded-sm bg-teal-bg px-1 py-0.5 font-mono text-teal-dark">
+              .env.local
+            </code>{" "}
             dan restart server.
           </p>
         </div>
@@ -288,84 +309,149 @@ export default function AdminPage() {
   // PIN screen
   if (sessionStatus === "unauthenticated") {
     const isThrottled = pinError.code === "too_many_attempts";
-    const isServerError = pinError.code === "server_misconfigured" || pinError.code === "network_error";
+    const isServerError =
+      pinError.code === "server_misconfigured" ||
+      pinError.code === "network_error";
     const errorTone =
       pinError.code === "invalid_pin"
-        ? "bg-danger/15 text-danger"
+        ? "bg-coral/12 text-coral-light"
         : isServerError || isThrottled
-          ? "bg-warning/15 text-warning"
-          : "bg-danger/15 text-danger";
+          ? "bg-accent-gold/15 text-accent-gold-light"
+          : "bg-coral/12 text-coral-light";
+
+    const buildId = process.env.NEXT_PUBLIC_BUILD_ID;
 
     return (
-      <div className={centeredPage}>
+      <div className={page}>
         <form onSubmit={verifyPin} noValidate className={card}>
-          <div className="grid h-14 w-14 place-items-center rounded-2xl bg-accent/15 text-accent">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-            </svg>
+          <div className="flex flex-col items-center gap-4 text-center">
+            <div className="grid h-16 w-16 place-items-center rounded-lg bg-teal-bg text-teal-dark shadow-teal-glow">
+              <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </div>
+            <div className="space-y-2">
+              <h1 className="text-3xl font-extrabold tracking-tight text-brand">
+                VConnect
+              </h1>
+              <p className="text-sm text-ink-dim">
+                Masukkan PIN {PIN_LENGTH} digit untuk melanjutkan
+              </p>
+            </div>
           </div>
 
-          <div className="space-y-1 text-center">
-            <h1 className="text-xl font-semibold text-ink">Admin</h1>
-            <p className="text-sm text-ink-dim">Masukkan PIN untuk melanjutkan</p>
-          </div>
+          <div className="divider-dashed" />
 
-          <div className="relative w-full">
-            <input
-              ref={inputRef}
-              type="password"
-              inputMode="numeric"
-              placeholder="••••••••"
-              value={pin}
-              onChange={(e) => {
-                // PENTING: jangan pasang maxLength di input ini.
-                // maxLength memotong teks MENTAH sebelum filter di bawah jalan,
-                // jadi paste "PIN: 56028717" (13 karakter) terpotong jadi
-                // "PIN: 560" -> hanya "560" yang lolos. Clipboard yang punya
-                // label, spasi, atau newline di depan akan selalu gagal.
-                // Batas panjang sudah dijamin slice() di bawah, jadi
-                // maxLength hanya menambah satu sumber bug.
-                const digits = e.target.value.replace(/\D/g, "").slice(0, PIN_LENGTH);
-                setPin(digits);
-              }}
-              autoComplete="off"
-              required
-              disabled={loading || isThrottled}
-              aria-describedby={pinError.message ? "pin-error" : undefined}
-              aria-invalid={pinError.code === "invalid_pin"}
-              className={`w-full rounded-xl border bg-base py-3.5 pl-4 pr-14 text-center font-mono text-xl tracking-[0.4em] text-ink transition-colors placeholder:text-ink-muted/40 disabled:opacity-50 ${
-                shake ? "animate-shake" : ""
-              } ${pinError.code === "invalid_pin" ? "border-danger" : "border-line focus:border-accent"}`}
-            />
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-xs tabular-nums text-ink-muted"
-            >
-              {pin.length}/{PIN_LENGTH}
-            </span>
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between">
+              <label
+                htmlFor="pin"
+                className="text-xs font-bold uppercase tracking-widest text-ink-dim"
+              >
+                PIN
+              </label>
+              <span
+                aria-hidden="true"
+                className="font-mono text-xs tabular-nums text-ink-muted"
+              >
+                {pin.length}/{PIN_LENGTH}
+              </span>
+            </div>
+
+            <div className="relative">
+              <input
+                id="pin"
+                ref={inputRef}
+                type={showPin ? "text" : "password"}
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="••••••••"
+                value={pin}
+                onChange={(e) => {
+                  // PENTING: jangan pasang maxLength di input ini.
+                  // maxLength memotong teks MENTAH sebelum filter di bawah jalan,
+                  // jadi paste "PIN: 56028717" (13 karakter) terpotong jadi
+                  // "PIN: 560" -> hanya "560" yang lolos.
+                  const digits = e.target.value.replace(/\D/g, "").slice(0, PIN_LENGTH);
+                  setPin(digits);
+                }}
+                onPaste={(e) => {
+                  // Jalur terpisah dari onChange. Read the clipboard ourselves and
+                  // own the whole value, so nothing about the browser's default
+                  // paste handling can truncate it.
+                  e.preventDefault();
+                  const text = e.clipboardData.getData("text");
+                  setPin(text.replace(/\D/g, "").slice(0, PIN_LENGTH));
+                  setPinError({ code: "", message: "" });
+                }}
+                required
+                disabled={loading || isThrottled}
+                aria-describedby={pinError.message ? "pin-error" : undefined}
+                aria-invalid={pinError.code === "invalid_pin"}
+                className={`w-full rounded-md border-2 border-line bg-surface-input py-4 pl-16 pr-16 text-center font-mono text-2xl font-semibold tracking-[0.35em] text-ink transition-colors [text-indent:0.35em] placeholder:text-ink-muted/40 disabled:opacity-50 ${
+                  shake ? "animate-shake" : ""
+                } ${
+                  pinError.code === "invalid_pin"
+                    ? "border-coral"
+                    : "focus:border-brand focus:shadow-teal-glow"
+                }`}
+              />
+
+              {/* Symmetric pl/pr keeps the digits optically centred while the
+                  button lives inside the padding instead of on top of it. */}
+              <button
+                type="button"
+                onClick={() => setShowPin((v) => !v)}
+                aria-label={showPin ? "Sembunyikan PIN" : "Tampilkan PIN"}
+                aria-pressed={showPin}
+                className="absolute right-2 top-1/2 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full text-ink-dim transition-colors hover:bg-teal-bg hover:text-teal-dark"
+              >
+                {showPin ? (
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                    <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+                    <line x1="1" y1="1" x2="23" y2="23" />
+                  </svg>
+                ) : (
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                )}
+              </button>
+            </div>
           </div>
 
           {pinError.message && (
-            <p id="pin-error" role="alert" aria-live="assertive" className={`w-full rounded-lg px-3 py-2 text-center text-sm ${errorTone}`}>
+            <p
+              id="pin-error"
+              role="alert"
+              aria-live="assertive"
+              className={`accent-bar-coral rounded-md px-4 py-3 text-sm font-medium ${errorTone}`}
+            >
               {pinError.message}
               {isThrottled && pinError.retryAfter && (
-                <span className="tabular-nums"> Coba lagi dalam {retryCountdown}s</span>
+                <span className="tabular-nums">
+                  {" "}
+                  Coba lagi dalam {retryCountdown}s
+                </span>
               )}
             </p>
           )}
 
-          <label className="flex w-full cursor-pointer items-start gap-3 rounded-xl border border-line bg-base p-3 transition-colors hover:border-line-strong">
+          <label className="flex w-full cursor-pointer items-start gap-3 rounded-md border-2 border-line bg-surface-input p-4 transition-colors hover:border-brand">
             <input
               type="checkbox"
               checked={remember}
               onChange={(e) => setRemember(e.target.checked)}
               disabled={loading}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
+              className="mt-1 h-5 w-5 shrink-0 accent-teal-light"
             />
-            <span className="space-y-0.5">
-              <span className="block text-sm font-medium text-ink">Ingat saya</span>
-              <span className="block text-xs leading-relaxed text-ink-muted">
+            <span className="space-y-1">
+              <span className="block text-sm font-bold text-ink">Ingat saya</span>
+              <span className="block text-xs leading-relaxed text-ink-dim">
                 {remember
                   ? "Tetap masuk di perangkat ini sampai PIN diganti"
                   : "Sesi berakhir saat browser ditutup"}
@@ -377,10 +463,16 @@ export default function AdminPage() {
             type="submit"
             disabled={loading || !pin.trim() || isThrottled}
             aria-busy={loading}
-            className="w-full rounded-xl bg-accent py-3 text-sm font-semibold text-white transition-colors hover:bg-accent/90"
+            className={`${cta} w-full disabled:hover:bg-accent-gold`}
           >
             {loading ? "Memeriksa…" : "Masuk"}
           </button>
+
+          {buildId ? (
+            <p className="text-center font-mono text-xs text-ink-muted">
+              Build {buildId}
+            </p>
+          ) : null}
         </form>
       </div>
     );
@@ -388,29 +480,29 @@ export default function AdminPage() {
 
   // ── Caller dashboard (authenticated) ──
   return (
-    <div className="relative h-dvh w-full overflow-hidden bg-base text-ink">
+    <div className="relative h-dvh w-full overflow-hidden bg-surface-base text-ink">
       <video ref={remoteVideoRef} autoPlay playsInline className="h-full w-full object-cover" />
       <video
         ref={localVideoRef}
         autoPlay
         playsInline
         muted
-        className={`absolute bottom-5 right-5 h-28 w-21 rounded-lg border border-line object-cover shadow-md transition-opacity duration-200 ${
+        className={`absolute bottom-5 right-5 aspect-[4/3] w-32 rounded-lg border-2 border-surface-card object-cover shadow-md transition-opacity duration-200 ${
           isInCall ? "opacity-100" : "pointer-events-none opacity-0"
         }`}
       />
 
-      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between border-b border-line bg-base/80 px-4 py-3">
-        <span className="rounded-full border border-line bg-surface px-3 py-1 text-xs uppercase tracking-widest text-ink-dim">
+      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between px-4 py-3">
+        <span className="rounded-full border border-line bg-surface-card/90 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-brand shadow-sm">
           Admin
         </span>
         <button
           onClick={handleLogout}
           aria-label="Keluar"
           title="Keluar"
-          className="grid h-9 w-9 place-items-center rounded-lg border border-line text-ink-dim transition-colors hover:border-danger hover:text-danger"
+          className="grid h-12 w-12 place-items-center rounded-full border border-line bg-surface-card/90 text-ink-dim shadow-sm transition-colors hover:border-coral hover:text-coral-light"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
             <polyline points="16 17 21 12 16 7" />
             <line x1="21" y1="12" x2="9" y2="12" />
@@ -418,26 +510,27 @@ export default function AdminPage() {
         </button>
       </header>
 
-      {/* Idle / ready to call */}
+      {/* Idle / ready to call — deliberately static: no pulse, no spin,
+          nothing infinite. A spinner only ever mounts in the connecting branch. */}
       {!isInCall && callState !== "error" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-7 bg-base px-6 text-center animate-fade-in">
-          <div className="relative grid h-24 w-24 place-items-center rounded-full bg-accent/15 text-accent">
-            <div className="absolute inset-0 rounded-full border border-accent/20" />
-            <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-8 bg-surface-base px-6 text-center animate-fade-in">
+          <div className="grid h-24 w-24 place-items-center rounded-full bg-teal-bg text-teal-dark shadow-teal-glow">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
               <polygon points="23 7 16 12 23 17 23 7" />
               <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
             </svg>
           </div>
 
           <div className="space-y-2">
-            <h2 className="text-2xl font-semibold text-ink">Siap Menelepon</h2>
-            <p className="text-sm text-ink-dim">Tekan tombol di bawah untuk memulai panggilan video</p>
+            <h2 className="text-3xl font-extrabold tracking-tight text-brand">
+              Siap Menelepon
+            </h2>
+            <p className="text-sm text-ink-dim">
+              Tekan tombol di bawah untuk memulai panggilan video
+            </p>
           </div>
 
-          <button
-            onClick={handleCall}
-            className="rounded-xl bg-accent px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-accent/90"
-          >
+          <button onClick={handleCall} className={cta}>
             Mulai Panggilan
           </button>
         </div>
@@ -445,10 +538,10 @@ export default function AdminPage() {
 
       {/* Connecting */}
       {callState === "connecting" && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-base/90 text-center">
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-surface-base/90 text-center">
           <div className={spinner} aria-hidden="true" />
           <div className="space-y-1">
-            <p className="text-sm font-medium text-ink">Menghubungi receiver…</p>
+            <p className="text-sm font-bold text-ink">Menghubungi receiver…</p>
             <p className="text-xs text-ink-muted">Menunggu receiver menjawab</p>
           </div>
         </div>
@@ -456,12 +549,11 @@ export default function AdminPage() {
 
       {/* Error */}
       {callState === "error" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-base px-6 text-center">
-          <p className="text-sm text-danger">Koneksi gagal.</p>
-          <button
-            onClick={handleCall}
-            className="rounded-xl bg-accent px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-accent/90"
-          >
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 bg-surface-base px-6 text-center">
+          <p className="accent-bar-coral rounded-md bg-coral/12 px-4 py-3 text-sm font-medium text-coral-light">
+            Koneksi gagal.
+          </p>
+          <button onClick={handleCall} className={cta}>
             Coba Lagi
           </button>
         </div>
@@ -469,12 +561,9 @@ export default function AdminPage() {
 
       {/* Ended */}
       {callState === "ended" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-base px-6 text-center">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 bg-surface-base px-6 text-center">
           <p className="text-sm text-ink-dim">Panggilan selesai.</p>
-          <button
-            onClick={handleCall}
-            className="rounded-xl bg-accent px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-accent/90"
-          >
+          <button onClick={handleCall} className={cta}>
             Panggil Lagi
           </button>
         </div>
@@ -486,9 +575,9 @@ export default function AdminPage() {
           <button
             onClick={endCall}
             aria-label="Akhiri panggilan"
-            className="grid h-16 w-16 place-items-center rounded-full bg-danger text-white shadow-lg transition-colors hover:bg-danger/90"
+            className="grid h-20 w-20 place-items-center rounded-full bg-coral text-on-coral shadow-coral-glow transition-transform hover:bg-coral-dark"
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" />
             </svg>
           </button>

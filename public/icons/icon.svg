@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="VConnect">
+  <rect width="512" height="512" fill="#4EC5C0"/>
+  <g transform="translate(115.6 115.6) scale(11.7)" fill="none" stroke="#186968" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+  </g>
+</svg>
