@@ -3,15 +3,31 @@
 :root {
   --bg:        #0a0a0f;
   --surface:   #111118;
+  --surface-elevated: #16161f;
   --border:    #1e1e2e;
+  --border-strong: #2a2a3e;
   --text:      #e8e8f0;
+  --text-dim:  #9a9ab8;
   --muted:     #5a5a78;
   --accent:    #6c63ff;
-  --accent-dim:#2d2b6b;
+  --accent-dim: #2d2b6b;
+  --accent-soft: #3d3a7a;
   --danger:    #ff4d6d;
+  --danger-dim: #4a1a25;
+  --warning:   #f5a623;
+  --warning-dim: #4a350a;
   --green:     #22d3a5;
+  --green-dim: #0d3d30;
   --radius:    12px;
+  --radius-lg: 20px;
   --font:      'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --shadow-sm: 0 2px 8px rgba(0,0,0,0.3);
+  --shadow-md: 0 8px 32px rgba(0,0,0,0.4);
+  --shadow-lg: 0 16px 48px rgba(0,0,0,0.5);
+  --transition-fast: 120ms ease;
+  --transition-normal: 200ms ease;
+  --transition-slow: 320ms ease;
 }
 
 html, body {
@@ -20,6 +36,7 @@ html, body {
   color: var(--text);
   font-family: var(--font);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 button {
@@ -27,12 +44,47 @@ button {
   font-family: inherit;
   border: none;
   outline: none;
-  transition: opacity 0.15s, transform 0.1s;
+  transition: opacity var(--transition-fast), transform var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 button:active { transform: scale(0.97); }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+input {
+  font-family: inherit;
+  outline: none;
+}
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 video {
   object-fit: cover;
   background: #000;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulseSubtle {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
 }

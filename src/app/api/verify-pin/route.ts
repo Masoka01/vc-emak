@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { createHash, timingSafeEqual } from "node:crypto";
+import {
+  COOKIE_NAME,
+  REMEMBER_MAX_AGE,
+  createSessionToken,
+  isSessionConfigured,
+  sessionCookieOptions,
+} from "@/lib/session";
 
 const MAX_ATTEMPTS = 5;
 const WINDOW_MS = 15 * 60 * 1000;
@@ -73,7 +81,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const raw = (body as { pin?: unknown } | null)?.pin;
+  const { pin: raw, remember } = (body ?? {}) as { pin?: unknown; remember?: unknown };
   if (typeof raw !== "string" || raw.trim().length === 0) {
     return NextResponse.json(
       { error: "invalid_request", message: "Permintaan tidak valid." },
@@ -81,16 +89,17 @@ export async function POST(req: NextRequest) {
     );
   }
   const pin = raw.trim();
+  const wantsRemember = remember === true;
 
   // Checked before anything else so a missing secret is reported as a server
   // setup problem, never as a wrong PIN.
-  const adminPin = process.env.ADMIN_PIN;
-  if (!adminPin) {
+  if (!isSessionConfigured()) {
     return NextResponse.json(
       { error: "server_misconfigured", message: "Server belum dikonfigurasi." },
       { status: 500 }
     );
   }
+  const adminPin = (process.env.ADMIN_PIN as string).trim();
 
   prune(now);
 
@@ -103,22 +112,31 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (safeEqual(pin, adminPin.trim())) {
-    attempts.delete(key);
-    return NextResponse.json({ ok: true });
+  if (!safeEqual(pin, adminPin)) {
+    // Only failures count toward the limit.
+    const next: Bucket =
+      bucket && now - bucket.firstAt <= WINDOW_MS
+        ? { failures: bucket.failures + 1, firstAt: bucket.firstAt }
+        : { failures: 1, firstAt: now };
+    attempts.set(key, next);
+
+    return NextResponse.json(
+      { error: "invalid_pin", message: "PIN salah." },
+      { status: 401 }
+    );
   }
 
-  // Only failures count toward the limit.
-  const next: Bucket =
-    bucket && now - bucket.firstAt <= WINDOW_MS
-      ? { failures: bucket.failures + 1, firstAt: bucket.firstAt }
-      : { failures: 1, firstAt: now };
-  attempts.set(key, next);
+  attempts.delete(key);
 
-  return NextResponse.json(
-    { error: "invalid_pin", message: "PIN salah." },
-    { status: 401 }
-  );
+  // Remember me stores an httpOnly cookie with a decade-long lifetime. It is
+  // revoked by fingerprint mismatch the moment ADMIN_PIN changes, which is why
+  // it needs no expiry of its own.
+  cookies().set(COOKIE_NAME, createSessionToken(adminPin, process.env.SESSION_SECRET as string), {
+    ...sessionCookieOptions,
+    ...(wantsRemember ? { maxAge: REMEMBER_MAX_AGE } : {}),
+  });
+
+  return NextResponse.json({ ok: true, persistent: wantsRemember });
 }
 
 function methodNotAllowed() {
