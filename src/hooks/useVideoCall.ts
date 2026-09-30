@@ -112,8 +112,9 @@ export function useVideoCall() {
     bumpAttach();
   }, []);
 
-  // Attach whatever we hold to whatever element is currently mounted. Depends on
-  // callState because the elements are conditionally rendered around it.
+  // Attach whatever we hold to whatever element is currently mounted. `armed`
+  // matters as much as the tick: arming is what mounts the local preview, and
+  // bumping the tick happens before that element exists.
   useEffect(() => {
     const local = localVideoRef.current;
     if (local && localStreamRef.current && local.srcObject !== localStreamRef.current) {
@@ -128,7 +129,7 @@ export function useVideoCall() {
       // the catch keeps a blocked play from surfacing as an unhandled rejection.
       void remote.play().catch(() => {});
     }
-  }, [attachTick, callState]);
+  }, [attachTick, callState, armed]);
 
   const clearMedia = useCallback(() => {
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
