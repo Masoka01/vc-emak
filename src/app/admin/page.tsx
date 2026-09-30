@@ -309,11 +309,17 @@ export default function AdminPage() {
               placeholder="••••••••"
               value={pin}
               onChange={(e) => {
+                // PENTING: jangan pasang maxLength di input ini.
+                // maxLength memotong teks MENTAH sebelum filter di bawah jalan,
+                // jadi paste "PIN: 56028717" (13 karakter) terpotong jadi
+                // "PIN: 560" -> hanya "560" yang lolos. Clipboard yang punya
+                // label, spasi, atau newline di depan akan selalu gagal.
+                // Batas panjang sudah dijamin slice() di bawah, jadi
+                // maxLength hanya menambah satu sumber bug.
                 const digits = e.target.value.replace(/\D/g, "").slice(0, PIN_LENGTH);
                 setPin(digits);
               }}
               autoComplete="off"
-              maxLength={PIN_LENGTH}
               required
               disabled={loading || isThrottled}
               aria-describedby={pinError.message ? "pin-error" : undefined}
