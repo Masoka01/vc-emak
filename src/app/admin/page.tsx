@@ -238,14 +238,25 @@ export default function AdminPage() {
   // ── Start call ──
   const handleCall = useCallback(async () => {
     setCallState("connecting");
+    // `step` is advanced before each await so the catch block can name the
+    // operation that actually threw. All four steps run inside one try/catch,
+    // so a bare `console.error(err)` produced an undiagnosable report: a
+    // NotFoundError from getUserMedia and a permission-denied from Firestore
+    // looked identical from the console.
+    let step = "initPeerConnection";
     try {
       const pc = initPC();
+      step = "getLocalMedia";
       const localStream = await getLocalStream();
+      step = "addTrack";
       localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+      step = "startCall";
       const cleanup = await startCall(pc, setRemoteStream);
       cleanupRef.current = cleanup;
     } catch (err) {
-      console.error(err);
+      const name = err instanceof Error ? err.name : typeof err;
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[admin] gagal pada langkah: ${step}`, { step, name, message, err });
       setCallState("error");
     }
   }, [initPC, getLocalStream, setRemoteStream, setCallState, cleanupRef]);
