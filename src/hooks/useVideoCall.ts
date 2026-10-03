@@ -295,17 +295,21 @@ export function useVideoCall() {
    * of the app silently one-way.
    */
   const arm = useCallback(
-    async (opts: GetLocalStreamOptions = {}) => {
-      if (armed) return;
+    async (opts: GetLocalStreamOptions = {}): Promise<boolean> => {
+      // Already armed: report success without re-opening a camera that is
+      // already running, so an answer path can arm-then-answer unconditionally.
+      if (armed) return true;
 
       try {
         await getLocalStream(opts);
         setPermission("granted");
         setArmed(true);
         void wakeLock.request();
+        return true;
       } catch {
         setPermission("denied");
         setArmed(false);
+        return false;
       }
     },
     [armed, getLocalStream, wakeLock]

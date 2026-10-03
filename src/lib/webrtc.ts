@@ -86,20 +86,22 @@ export async function startCall(
 // ─── RECEIVER ────────────────────────────────────────────────────────────────
 
 export function listenForCall(
-  onIncomingCall: () => void
+  onStatusChange: (incoming: boolean) => void
 ): () => void {
   const roomRef = doc(db, "rooms", ROOM_ID);
   return onSnapshot(roomRef, (snap) => {
     const data = snap.data();
-    if (data?.status === "calling" && data?.offer) {
-      onIncomingCall();
-    }
+    // Report both directions. An incoming-call indicator has to be able to
+    // disappear when the caller gives up, and giving up never produces another
+    // "calling" event — it produces the absence of one.
+    onStatusChange(Boolean(data?.status === "calling" && data?.offer));
   });
 }
 
 export async function answerCall(
   pc: RTCPeerConnection,
-  onRemoteStream: (stream: MediaStream) => void
+  onRemoteStream: (stream: MediaStream) => void,
+  onRemoteHangup?: () => void
 ): Promise<() => void> {
   const roomRef = doc(db, "rooms", ROOM_ID);
   const roomSnap = await getDoc(roomRef);
@@ -145,6 +147,11 @@ export async function answerCall(
   const unsubRoom = onSnapshot(roomRef, (snap) => {
     if (!snap.exists() || snap.data()?.status === "ended") {
       pc.close();
+      // Closing the peer connection only sets connectionState to "closed",
+      // which the receiver would have to guess the meaning of. Say it plainly,
+      // so the receiver can return to its idle state deliberately instead of
+      // sitting in a half-torn-down call with the camera still held open.
+      onRemoteHangup?.();
     }
   });
 

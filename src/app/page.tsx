@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import { listenForCall, answerCall } from "@/lib/webrtc";
 import { useVideoCall } from "@/hooks/useVideoCall";
 
@@ -40,7 +40,16 @@ export default function ReceiverPage() {
       step = "addTrack";
       localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
       step = "answerCall";
-      const cleanup = await answerCall(pc, setRemoteStream);
+      // Release the previous call's Firestore listeners before replacing them.
+      // Otherwise the room watcher and candidate listener from the last call
+      // stay subscribed forever, still feeding ICE candidates into a
+      // connection nobody owns any more.
+      cleanupRef.current?.();
+      // `disarm` returns the receiver to idle when the caller hangs up: it
+      // closes this connection, stops the camera, and clears callState. Its
+      // `setCallState("idle")` runs after the close, so it wins over the
+      // "closed" that the close itself reports.
+      const cleanup = await answerCall(pc, setRemoteStream, disarm);
       cleanupRef.current = cleanup;
     } catch (err) {
       const name = err instanceof Error ? err.name : typeof err;
@@ -48,16 +57,62 @@ export default function ReceiverPage() {
       console.error(`[receiver] gagal pada langkah: ${step}`, { step, name, message, err });
       setCallState("error");
     }
-  }, [initPC, getLocalStream, setRemoteStream, setCallState, cleanupRef]);
+  }, [initPC, getLocalStream, setRemoteStream, setCallState, cleanupRef, disarm]);
+
+  // An idle receiver cannot answer on its own, so an incoming call has to be
+  // visible. Otherwise the caller waits on a connection the receiver is not
+  // even looking at, with no way to tell the difference from a dead phone.
+  const [incoming, setIncoming] = useState(false);
+  const incomingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearIncoming = useCallback(() => {
+    if (incomingTimerRef.current) {
+      clearTimeout(incomingTimerRef.current);
+      incomingTimerRef.current = null;
+    }
+    setIncoming(false);
+  }, []);
+
+  const acceptCall = useCallback(async () => {
+    clearIncoming();
+    // Answering from idle means opening the camera first: there is no stream to
+    // send until the receiver is armed.
+    const ready = await arm({ facing: "environment" });
+    if (ready) handleAnswer();
+  }, [arm, handleAnswer, clearIncoming]);
 
   useEffect(() => {
-    const unsub = listenForCall(() => {
-      if ((callState === "idle" || callState === "ended") && armed) {
-        handleAnswer();
+    const unsub = listenForCall((isIncoming) => {
+      // Cancel a pending auto-clear first: the room document fires several
+      // snapshots while it still says "calling", and each of them must not
+      // restart the countdown.
+      if (incomingTimerRef.current) {
+        clearTimeout(incomingTimerRef.current);
+        incomingTimerRef.current = null;
       }
+
+      if (!isIncoming) {
+        setIncoming(false);
+        return;
+      }
+
+      // An armed receiver answers by itself, so prompting would only flash.
+      if ((callState === "idle" || callState === "ended") && armed) {
+        setIncoming(false);
+        handleAnswer();
+        return;
+      }
+
+      setIncoming(true);
+      // Safety net: a caller who closes their tab without hanging up leaves the
+      // room document saying "calling" forever, and the prompt would stick.
+      incomingTimerRef.current = setTimeout(() => setIncoming(false), 30000);
     });
 
-    return () => unsub();
+    return () => {
+      unsub();
+      if (incomingTimerRef.current) clearTimeout(incomingTimerRef.current);
+    };
   }, [callState, armed, handleAnswer]);
 
   const isInCall = callState === "connecting" || callState === "connected";
@@ -65,7 +120,7 @@ export default function ReceiverPage() {
   const isPermissionDenied = permission === "denied";
 
   // Logo SVG (padlock) — same mark as the admin login and the PWA icon
-  const LockIcon = () => (
+  const LockIcon = ({ className }: { className?: string }) => (
     <svg
       width="56"
       height="56"
@@ -74,6 +129,7 @@ export default function ReceiverPage() {
       stroke="currentColor"
       strokeWidth="1.6"
       aria-hidden="true"
+      className={className}
     >
       <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
@@ -131,7 +187,7 @@ export default function ReceiverPage() {
           The full-screen video above is the caller, which is the only thing
           worth the screen here. */}
       {/* Idle / Armed / Permission Denied - centered logo */}
-      {!isInCall && callState !== "error" && (
+      {!isInCall && !incoming && callState !== "error" && (
         <div className="absolute inset-0 flex items-center justify-center px-6 animate-fade-in">
           <div className="relative flex flex-col items-center gap-6 text-center">
             <button
@@ -160,6 +216,32 @@ export default function ReceiverPage() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Incoming call while idle — distinct from "armed" (solid ring + green dot).
+          Dashed ring = waiting passively. Pulsing solid ring + full-screen breath =
+          "ringing right now". Whole screen is the tap target. */}
+      {incoming && (
+        <button
+          onClick={() => void acceptCall()}
+          aria-label="Panggilan masuk. Ketuk untuk menjawab"
+          className="absolute inset-0 z-20 flex animate-fade-in flex-col items-center justify-center gap-6 px-6 text-center focus:outline-none focus-visible:ring-4 focus-visible:ring-brand/50"
+        >
+          {/* Full-screen subtle breath for urgency — respects reduced motion */}
+          <div className="absolute inset-0 motion-safe:animate-pulse bg-brand/5" aria-hidden="true" />
+          <div className="relative grid h-48 w-48 place-items-center">
+            {/* Static dashed ring — always visible, distinct from armed's solid ring */}
+            <span className="absolute inset-0 rounded-full border-2 border-dashed border-brand" aria-hidden="true" />
+            {/* Pulsing solid ring — only when motion is allowed */}
+            <span className="absolute inset-0 rounded-full border-2 border-brand/40 motion-safe:animate-pulse" aria-hidden="true" />
+            {/* Lock icon stays steady */}
+            <LockIcon className="relative text-brand" />
+          </div>
+          <span className="text-sm font-medium text-brand">Panggilan masuk</span>
+          <span className="text-xs uppercase tracking-widest text-brand/70">
+            Ketuk layar untuk menjawab
+          </span>
+        </button>
       )}
 
       {/* Connecting overlay */}
