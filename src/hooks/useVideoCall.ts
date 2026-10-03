@@ -5,6 +5,25 @@ import { useWakeLock } from "./useWakeLock";
 
 export type CallState = "idle" | "connecting" | "connected" | "ended" | "error";
 export type PermissionState = "unknown" | "prompt" | "granted" | "denied";
+export type CameraFacing = "user" | "environment";
+
+export type GetLocalStreamOptions = {
+  /** Request a camera track. Default true. */
+  video?: boolean;
+  /** Request a microphone track. Default true. */
+  audio?: boolean;
+  /** Which camera to prefer. Default "user" (PC webcam / selfie camera). */
+  facing?: CameraFacing;
+};
+
+/**
+ * getUserMedia rejects the whole request when any requested device class is
+ * missing, so a caller on a PC with no webcam used to fail the entire call with
+ * NotFoundError. These are the failure names that mean "this device class does
+ * not exist here", which is a normal condition worth degrading out of rather
+ * than an error worth surfacing.
+ */
+const DEVICE_MISSING = ["NotFoundError", "OverconstrainedError", "NotReadableError"] as const;
 
 export function useVideoCall() {
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -29,7 +48,24 @@ export function useVideoCall() {
   // whichever <video> element happens to hold the ref right now — that ref moves
   // between the armed preview and the in-call picture-in-picture.
   const [micEnabled, setMicEnabledState] = useState(true);
+  // A PC without a webcam is a normal setup, not an error, so the caller can
+  // place a call with the camera off instead of being blocked by it.
+  const [cameraAvailable, setCameraAvailable] = useState(true);
+  const [videoEnabled, setVideoEnabledState] = useState(true);
   const wakeLock = useWakeLock();
+
+  const setVideoEnabled = useCallback((enabled: boolean) => {
+    if (enabled && !localStreamRef.current?.getVideoTracks().length) {
+      // Acquiring a camera mid-call needs renegotiation, which this hook does
+      // not do. Refuse rather than report a lie to the UI.
+      console.warn("[useVideoCall] tidak ada track kamera untuk diaktifkan");
+      return;
+    }
+    localStreamRef.current?.getVideoTracks().forEach((t) => {
+      t.enabled = enabled;
+    });
+    setVideoEnabledState(enabled);
+  }, []);
 
   const applyMicState = useCallback((enabled: boolean) => {
     localStreamRef.current?.getAudioTracks().forEach((t) => {
@@ -61,9 +97,17 @@ export function useVideoCall() {
       .query({ name: "camera" })
       .then((status) => {
         if (stale) return;
-        setPermission(status.state as PermissionState);
+        // "prompt" and "denied" both mean the OS has not granted us a camera
+        // *yet*. arm() is the authority on whether the camera actually opened,
+        // so reporting anything else here would contradict it — a machine with
+        // no webcam at all reports "denied", which is not a rejection the user
+        // can act on. Only a granted state is worth surfacing from here.
+        if (status.state === "granted") setPermission("granted");
+        else setPermission("unknown");
         status.onchange = () => {
-          if (!stale) setPermission(status.state as PermissionState);
+          if (stale) return;
+          if (status.state === "granted") setPermission("granted");
+          else setPermission("unknown");
         };
       })
       .catch(() => {
@@ -75,23 +119,116 @@ export function useVideoCall() {
     };
   }, []);
 
-  const getLocalStream = useCallback(async (): Promise<MediaStream> => {
-    // Reuse the stream that arm() already opened. Calling getUserMedia again
-    // would tear down and re-open the camera for no reason, and on some
-    // devices that is slow enough to be noticed when a call comes in.
-    if (localStreamRef.current) return localStreamRef.current;
+  // Probe for a camera up front. Without this, `cameraAvailable` could only be
+  // learned by actually attempting getUserMedia — which meant the caller had no
+  // way to know before dialling that this machine has no webcam, and the
+  // control that reports it was unreachable at exactly that moment.
+  useEffect(() => {
+    let stale = false;
+    const md = navigator.mediaDevices as MediaDevices | undefined;
+    if (!md?.enumerateDevices) return;
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 1280, height: 720, facingMode: "user" },
-      audio: true,
-    });
-    localStreamRef.current = stream;
-    // A fresh stream must honour the current mute choice, otherwise reopening
-    // the mic after a hang-up would silently unmute.
-    applyMicState(micEnabled);
-    bumpAttach();
-    return stream;
-  }, [applyMicState, micEnabled]);
+    md.enumerateDevices()
+      .then((devices) => {
+        if (stale) return;
+        if (!devices.some((d) => d.kind === "videoinput")) {
+          setCameraAvailable(false);
+          setVideoEnabledState(false);
+        }
+      })
+      .catch(() => {
+        // Device enumeration can be refused; absence of knowledge is not proof
+        // of absence, so leave the optimistic default in place.
+      });
+
+    return () => {
+      stale = true;
+    };
+  }, []);
+
+  const getLocalStream = useCallback(
+    async (opts: GetLocalStreamOptions = {}): Promise<MediaStream> => {
+      const { video = true, audio = true, facing = "user" } = opts;
+
+      // Reuse the stream that arm() already opened. Calling getUserMedia again
+      // would tear down and re-open the camera for no reason, and on some
+      // devices that is slow enough to be noticed when a call comes in.
+      if (localStreamRef.current) return localStreamRef.current;
+
+      // Explicit rather than a bare `true`. Browser-side echo cancellation is
+      // what keeps a call from howling when both devices sit close together and
+      // each speaker feeds the other's microphone.
+      const audioConstraints: MediaStreamConstraints["audio"] = audio
+        ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        : false;
+
+      // Ordered attempts rather than one request: preferring the rear camera
+      // and surviving a device that has none are different asks, and one
+      // getUserMedia call cannot satisfy both.
+      const attempts: MediaStreamConstraints[] = [];
+      if (video) {
+        const base = { width: 1280, height: 720 };
+        // Exact first for the rear camera. `ideal` is only a preference, so a
+        // phone whose rear camera is busy can quietly hand back the front one,
+        // which defeats the point of a phone propped up to show what it sees.
+        // Exact would hard-fail instead, so the `ideal` attempt below keeps
+        // tablets and laptops without a matching camera working.
+        if (facing === "environment") {
+          attempts.push({
+            video: { ...base, facingMode: { exact: "environment" } },
+            audio: audioConstraints,
+          });
+        }
+        attempts.push({
+          video: { ...base, facingMode: { ideal: facing } },
+          audio: audioConstraints,
+        });
+      }
+      // Audio-only is the last resort so a machine with no camera (the usual
+      // desktop case) can still place a call. Skipped when there is no mic to
+      // ask for: a constraints object with every field false is a TypeError,
+      // not a recoverable device error.
+      if (audio) {
+        attempts.push({ video: false, audio: audioConstraints });
+      }
+
+      let stream: MediaStream | null = null;
+      let lastError: unknown = null;
+      for (const attempt of attempts) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(attempt);
+          break;
+        } catch (err) {
+          lastError = err;
+          const name = err instanceof Error ? err.name : "";
+          // Anything else is a genuine failure — a refused permission, most
+          // importantly — and retrying it would only delay surfacing it.
+          if (!DEVICE_MISSING.includes(name as (typeof DEVICE_MISSING)[number])) throw err;
+        }
+      }
+      if (!stream) throw lastError;
+
+      const hasVideo = stream.getVideoTracks().length > 0;
+      // Only correct the flag when video was actually requested: a caller who
+      // deliberately dialled in with the camera off still has working hardware,
+      // and marking it unavailable would wrongly disable their camera control.
+      if (video) {
+        setCameraAvailable(hasVideo);
+        if (!hasVideo) setVideoEnabledState(false);
+      }
+
+      localStreamRef.current = stream;
+      // A fresh stream must honour the current choices, otherwise reopening the
+      // mic after a hang-up would silently unmute.
+      applyMicState(micEnabled);
+      stream.getVideoTracks().forEach((t) => {
+        t.enabled = videoEnabled;
+      });
+      bumpAttach();
+      return stream;
+    },
+    [applyMicState, micEnabled, videoEnabled]
+  );
 
   const initPC = useCallback(() => {
     if (pcRef.current) pcRef.current.close();
@@ -157,19 +294,22 @@ export function useVideoCall() {
    * send video but never hears the admin — which would make the "two-way" part
    * of the app silently one-way.
    */
-  const arm = useCallback(async () => {
-    if (armed) return;
+  const arm = useCallback(
+    async (opts: GetLocalStreamOptions = {}) => {
+      if (armed) return;
 
-    try {
-      await getLocalStream();
-      setPermission("granted");
-      setArmed(true);
-      void wakeLock.request();
-    } catch {
-      setPermission("denied");
-      setArmed(false);
-    }
-  }, [armed, getLocalStream, wakeLock]);
+      try {
+        await getLocalStream(opts);
+        setPermission("granted");
+        setArmed(true);
+        void wakeLock.request();
+      } catch {
+        setPermission("denied");
+        setArmed(false);
+      }
+    },
+    [armed, getLocalStream, wakeLock]
+  );
 
   const endCall = useCallback(async () => {
     cleanupRef.current?.();
@@ -201,5 +341,8 @@ export function useVideoCall() {
     wakeLockActive: wakeLock.active,
     micEnabled,
     setMicEnabled,
+    videoEnabled,
+    setVideoEnabled,
+    cameraAvailable,
   };
 }

@@ -70,6 +70,11 @@ export default function AdminPage() {
     initPC,
     setRemoteStream,
     endCall,
+    micEnabled,
+    setMicEnabled,
+    videoEnabled,
+    setVideoEnabled,
+    cameraAvailable,
   } = useVideoCall();
 
   // ── Session check on mount ──
@@ -237,6 +242,10 @@ export default function AdminPage() {
 
   // ── Start call ──
   const handleCall = useCallback(async () => {
+    // If both camera and mic are off, there's nothing to send — don't call
+    // getUserMedia with neither device. The admin must enable at least one.
+    if (!videoEnabled && !micEnabled) return;
+
     setCallState("connecting");
     // `step` is advanced before each await so the catch block can name the
     // operation that actually threw. All four steps run inside one try/catch,
@@ -247,7 +256,11 @@ export default function AdminPage() {
     try {
       const pc = initPC();
       step = "getLocalMedia";
-      const localStream = await getLocalStream();
+      const localStream = await getLocalStream({
+        video: videoEnabled,
+        audio: micEnabled,
+        facing: "user",
+      });
       step = "addTrack";
       localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
       step = "startCall";
@@ -259,7 +272,7 @@ export default function AdminPage() {
       console.error(`[admin] gagal pada langkah: ${step}`, { step, name, message, err });
       setCallState("error");
     }
-  }, [initPC, getLocalStream, setRemoteStream, setCallState, cleanupRef]);
+  }, [initPC, getLocalStream, setRemoteStream, setCallState, cleanupRef, videoEnabled, micEnabled]);
 
   const isInCall = callState === "connecting" || callState === "connected";
 
@@ -493,15 +506,16 @@ export default function AdminPage() {
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-surface-base text-ink">
       <video ref={remoteVideoRef} autoPlay playsInline className="h-full w-full object-cover" />
-      <video
-        ref={localVideoRef}
-        autoPlay
-        playsInline
-        muted
-        className={`absolute bottom-5 right-5 aspect-[4/3] w-32 rounded-lg border-2 border-surface-card object-cover shadow-md transition-opacity duration-200 ${
-          isInCall ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
-      />
+      {/* Local PiP during call — hidden when camera is unavailable or toggled off */}
+      {isInCall && videoEnabled && cameraAvailable && (
+        <video
+          ref={localVideoRef}
+          autoPlay
+          playsInline
+          muted
+          className="absolute bottom-5 right-5 aspect-[4/3] w-32 rounded-lg border-2 border-surface-card object-cover shadow-md transition-opacity duration-200 opacity-100"
+        />
+      )}
 
       <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between px-4 py-3">
         <span className="rounded-full border border-line bg-surface-card/90 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-brand shadow-sm">
@@ -540,6 +554,67 @@ export default function AdminPage() {
               Tekan tombol di bawah untuk memulai panggilan video
             </p>
           </div>
+
+          {/* Pre-call device toggles — default ON so the admin can opt out */}
+          <div className="flex items-center justify-center gap-4">
+            <button
+              onClick={() => setVideoEnabled(!videoEnabled)}
+              disabled={!cameraAvailable}
+              aria-label={videoEnabled ? "Matikan kamera" : "Aktifkan kamera"}
+              aria-pressed={videoEnabled}
+              className={`grid h-14 w-14 place-items-center rounded-full border-2 transition-colors focus:outline-none focus:ring-2 focus:ring-brand ${
+                cameraAvailable
+                  ? videoEnabled
+                    ? "bg-surface-card border-teal-bg text-teal-bg hover:bg-teal-bg/10"
+                    : "bg-surface-card border-line text-ink-dim hover:border-brand hover:text-brand"
+                    : "bg-surface-card/50 border-line/50 text-ink-muted cursor-not-allowed"
+              }`}
+            >
+              {videoEnabled ? (
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                  <circle cx="12" cy="13" r="4" />
+                </svg>
+              ) : (
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                  <line x1="1" y1="1" x2="23" y2="23" />
+                </svg>
+              )}
+            </button>
+
+            <button
+              onClick={() => setMicEnabled(!micEnabled)}
+              aria-label={micEnabled ? "Matikan mikrofon" : "Aktifkan mikrofon"}
+              aria-pressed={micEnabled}
+              className={`grid h-14 w-14 place-items-center rounded-full border-2 transition-colors focus:outline-none focus:ring-2 focus:ring-brand ${
+                micEnabled
+                  ? "bg-surface-card border-teal-bg text-teal-bg hover:bg-teal-bg/10"
+                  : "bg-surface-card border-line text-ink-dim hover:border-brand hover:text-brand"
+              }`}
+            >
+              {micEnabled ? (
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="22" />
+                </svg>
+              ) : (
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="1" y1="1" x2="23" y2="23" />
+                  <line x1="12" y1="19" x2="12" y2="22" />
+                </svg>
+              )}
+            </button>
+          </div>
+
+          {!cameraAvailable && (
+            <p className="text-xs text-ink-muted">
+              Kamera tidak tersedia — panggilan akan berjalan dengan mikrofon saja.
+            </p>
+          )}
 
           <button onClick={handleCall} className={cta}>
             Mulai Panggilan
@@ -580,15 +655,67 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* In-call controls */}
+      {/* In-call controls — camera toggle, mic toggle, hangup */}
       {isInCall && (
-        <div className="absolute inset-x-0 bottom-8 z-30 flex justify-center">
+        <div className="absolute inset-x-0 bottom-8 z-30 flex justify-center gap-4 px-4">
+          <button
+            onClick={() => setVideoEnabled(!videoEnabled)}
+            disabled={!cameraAvailable}
+            aria-label={videoEnabled ? "Matikan kamera" : "Aktifkan kamera"}
+            aria-pressed={videoEnabled}
+            className={`grid h-14 w-14 place-items-center rounded-full border-2 transition-colors focus:outline-none focus:ring-2 focus:ring-brand ${
+              cameraAvailable
+                ? videoEnabled
+                  ? "bg-surface-card/90 border-teal-bg text-teal-bg hover:bg-teal-bg/10"
+                  : "bg-surface-card/90 border-line text-ink-dim hover:border-brand hover:text-brand"
+                  : "bg-surface-card/50 border-line/50 text-ink-muted cursor-not-allowed"
+            }`}
+          >
+            {videoEnabled ? (
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <circle cx="12" cy="13" r="4" />
+              </svg>
+            ) : (
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <line x1="1" y1="1" x2="23" y2="23" />
+              </svg>
+            )}
+          </button>
+
+          <button
+            onClick={() => setMicEnabled(!micEnabled)}
+            aria-label={micEnabled ? "Matikan mikrofon" : "Aktifkan mikrofon"}
+            aria-pressed={micEnabled}
+            className={`grid h-14 w-14 place-items-center rounded-full border-2 transition-colors focus:outline-none focus:ring-2 focus:ring-brand ${
+              micEnabled
+                ? "bg-surface-card/90 border-teal-bg text-teal-bg hover:bg-teal-bg/10"
+                : "bg-surface-card/90 border-line text-ink-dim hover:border-brand hover:text-brand"
+            }`}
+          >
+            {micEnabled ? (
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="22" />
+              </svg>
+            ) : (
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="1" y1="1" x2="23" y2="23" />
+                <line x1="12" y1="19" x2="12" y2="22" />
+              </svg>
+            )}
+          </button>
+
           <button
             onClick={endCall}
             aria-label="Akhiri panggilan"
-            className="grid h-20 w-20 place-items-center rounded-full bg-coral text-on-coral shadow-coral-glow transition-transform hover:bg-coral-dark"
+            className="grid h-14 w-14 place-items-center rounded-full bg-coral text-on-coral shadow-coral-glow transition-transform hover:bg-coral-dark focus:outline-none focus:ring-2 focus:ring-coral"
           >
-            <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" />
             </svg>
           </button>

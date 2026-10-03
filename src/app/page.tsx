@@ -10,7 +10,6 @@ export default function ReceiverPage() {
     cleanupRef,
     callState,
     setCallState,
-    localVideoRef,
     remoteVideoRef,
     getLocalStream,
     initPC,
@@ -34,7 +33,10 @@ export default function ReceiverPage() {
     try {
       const pc = initPC();
       step = "getLocalMedia";
-      const localStream = await getLocalStream();
+      // Pass the facing explicitly rather than relying on the stream arm()
+      // happened to open: the default is the front camera, so a cache miss
+      // here would silently answer with the wrong one.
+      const localStream = await getLocalStream({ facing: "environment" });
       step = "addTrack";
       localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
       step = "answerCall";
@@ -77,19 +79,6 @@ export default function ReceiverPage() {
       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
     </svg>
   );
-
-  // Small live preview for armed state
-  const ArmedPreview = () => (
-    <video
-      ref={localVideoRef}
-      autoPlay
-      playsInline
-      muted
-      className="absolute -bottom-6 -right-6 h-20 w-20 aspect-square rounded-lg border-2 border-teal-bg/50 object-cover shadow-lg"
-      aria-hidden="true"
-    />
-  );
-
   // In-call controls: mute toggle + hang up
   const InCallControls = () => (
     <div className="absolute inset-x-0 bottom-6 z-30 flex justify-center gap-4 px-4">
@@ -137,40 +126,36 @@ export default function ReceiverPage() {
         }`}
       />
 
-      {/* Local PiP during call */}
-      {isInCall && (
-        <video
-          ref={localVideoRef}
-          autoPlay
-          playsInline
-          muted
-          className="absolute bottom-5 right-5 aspect-[4/3] w-32 rounded-lg border-2 border-surface-card object-cover shadow-md transition-opacity duration-200 opacity-100"
-        />
-      )}
-
+      {/* No local PiP: the receiver's own camera is sent to the caller, so
+          mirroring it back would only duplicate what the caller already has.
+          The full-screen video above is the caller, which is the only thing
+          worth the screen here. */}
       {/* Idle / Armed / Permission Denied - centered logo */}
       {!isInCall && callState !== "error" && (
         <div className="absolute inset-0 flex items-center justify-center px-6 animate-fade-in">
           <div className="relative flex flex-col items-center gap-6 text-center">
             <button
-              onClick={arm}
+              onClick={() => arm({ facing: "environment" })}
               aria-label={isArmed ? "Siap menerima panggilan" : isPermissionDenied ? "Izin ditolak. Ketuk untuk mencoba lagi" : "Aktifkan kamera dan mikrofon"}
               aria-pressed={isArmed}
-              className="relative grid h-48 w-48 place-items-center rounded-full border-2 border-brand/50 text-brand transition-transform hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus:ring-4 focus:ring-brand/50"
+              className="relative grid h-48 w-48 place-items-center rounded-full border-2 transition-transform hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus:ring-4"
+              style={{
+                borderColor: isArmed ? "rgb(16 185 129)" : "rgba(16 185 129, 0.5)",
+                color: isArmed ? "rgb(16 185 129)" : "rgba(16 185 129, 1)",
+              }}
             >
               <LockIcon />
-              {isArmed && <ArmedPreview />}
+              {isArmed && (
+                <span
+                  className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-emerald-500 border-2 border-black"
+                  aria-hidden="true"
+                />
+              )}
             </button>
 
             {isPermissionDenied && (
               <p className="max-w-xs text-sm text-ink-dim px-4">
                 Kamera atau mikrofon ditolak. Izinkan akses di pengaturan browser lalu ketuk logo lagi.
-              </p>
-            )}
-
-            {isArmed && !isPermissionDenied && (
-              <p className="text-xs font-medium text-brand/80 tracking-wider uppercase">
-                Siap menerima panggilan
               </p>
             )}
           </div>
