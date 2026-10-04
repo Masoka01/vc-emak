@@ -3,6 +3,14 @@
 import { useEffect, useCallback, useRef, useState } from "react";
 import { listenForCall, answerCall } from "@/lib/webrtc";
 import { useVideoCall } from "@/hooks/useVideoCall";
+import {
+  observeAuth,
+  signIn,
+  signUp,
+  signOutUser,
+  startPresence,
+  type SessionUser,
+} from "@/lib/auth";
 
 export default function ReceiverPage() {
   const {
@@ -158,6 +166,100 @@ export default function ReceiverPage() {
   const isArmed = armed && permission === "granted";
   const isPermissionDenied = permission === "denied";
 
+  // ── Auth state ──
+  const [authStatus, setAuthStatus] = useState<"checking" | "unauthenticated" | "authenticated">("checking");
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [authError, setAuthError] = useState("");
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState({ email: "", password: "", displayName: "" });
+  const emailRef = useRef<HTMLInputElement>(null);
+  const displayNameRef = useRef<HTMLInputElement>(null);
+
+  // Observe auth state — fires once immediately with current session
+  useEffect(() => {
+    const unsub = observeAuth((u) => {
+      setUser(u);
+      setAuthStatus(u ? "authenticated" : "unauthenticated");
+    });
+    return unsub;
+  }, []);
+
+  // Start presence heartbeat when signed in
+  useEffect(() => {
+    if (user?.uid) {
+      const cleanup = startPresence(user.uid);
+      return cleanup;
+    }
+  }, [user?.uid]);
+
+  // Focus email field when auth screen appears
+  useEffect(() => {
+    if (authStatus === "unauthenticated") {
+      setTimeout(() => emailRef.current?.focus(), 0);
+    }
+  }, [authStatus]);
+
+  // Reset form when switching modes
+  useEffect(() => {
+    setFormData({ email: "", password: "", displayName: "" });
+    setAuthError("");
+  }, [authMode]);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+    if (authError) setAuthError("");
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (loading) return;
+
+    const { email, password, displayName } = formData;
+    if (!email.trim() || !password) return;
+    if (authMode === "signup" && !displayName.trim()) return;
+
+    setLoading(true);
+    setAuthError("");
+
+    try {
+      if (authMode === "signin") {
+        await signIn(email.trim(), password);
+      } else {
+        await signUp(displayName.trim(), email.trim(), password);
+      }
+      // observeAuth will fire and transition us to authenticated
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Terjadi kesalahan. Coba lagi.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    // Stop the camera/mic before leaving: this component stays mounted across
+    // sign out (the auth gate is an early return), so nothing else would
+    // release the stream and the camera light would stay on behind the login
+    // screen. Tear the call down first while still signed in, so the hang-up
+    // write still passes the Firestore rules; disarm after guarantees idle
+    // state even if the hang-up failed.
+    if (isInCall) {
+      try {
+        await endCall();
+      } catch {
+        // Best-effort: the media release below must still run.
+      }
+    }
+    disarm();
+    try {
+      await signOutUser();
+    } catch {
+      // Ignore network errors on sign out
+    }
+    // observeAuth will fire and transition us to unauthenticated
+  };
+
   // Logo SVG (padlock) — same mark as the admin login and the PWA icon
   const LockIcon = ({ className }: { className?: string }) => (
     <svg
@@ -174,6 +276,7 @@ export default function ReceiverPage() {
       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
     </svg>
   );
+
   // In-call controls: mute toggle + hang up
   const InCallControls = () => (
     <div className="absolute inset-x-0 bottom-6 z-30 flex justify-center gap-4 px-4">
@@ -209,6 +312,219 @@ export default function ReceiverPage() {
     </div>
   );
 
+  // ── Auth gate UI ──
+  if (authStatus === "checking") {
+    return (
+      <div className="relative h-dvh w-full overflow-hidden" style={{ background: "#000000" }}>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="h-10 w-10 rounded-full border-2 border-teal-bg border-t-teal animate-spin" aria-hidden="true" />
+          <span className="sr-only">Memeriksa sesi…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (authStatus === "unauthenticated") {
+    const isSignup = authMode === "signup";
+
+    return (
+      <div className="relative h-dvh w-full overflow-hidden" style={{ background: "#000000" }}>
+        <div className="absolute inset-0 flex items-center justify-center px-4 animate-fade-in">
+          <form onSubmit={handleSubmit} noValidate className="w-full max-w-md">
+            <div className="flex flex-col items-center gap-6 text-center mb-8">
+              <LockIcon className="text-brand" />
+              <div className="space-y-2">
+                <h1 className="text-3xl font-extrabold tracking-tight text-brand">VConnect</h1>
+                <p className="text-sm text-ink-dim">
+                  {isSignup ? "Daftar sebagai receiver baru" : "Masuk untuk menerima panggilan"}
+                </p>
+              </div>
+            </div>
+
+            <div className="divider-dashed mb-6" />
+
+            {/* Mode toggle tabs */}
+            <div className="flex gap-2 mb-6" role="tablist" aria-label="Pilih mode">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={!isSignup}
+                aria-controls="signin-panel"
+                id="signin-tab"
+                onClick={() => setAuthMode("signin")}
+                className={`flex-1 rounded-md px-4 py-3 text-sm font-bold uppercase tracking-widest transition-colors ${
+                  !isSignup
+                    ? "bg-teal-bg text-teal-dark shadow-teal-glow"
+                    : "bg-surface-card border border-line text-ink-dim hover:border-brand hover:text-brand"
+                }`}
+              >
+                Masuk
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={isSignup}
+                aria-controls="signup-panel"
+                id="signup-tab"
+                onClick={() => setAuthMode("signup")}
+                className={`flex-1 rounded-md px-4 py-3 text-sm font-bold uppercase tracking-widest transition-colors ${
+                  isSignup
+                    ? "bg-teal-bg text-teal-dark shadow-teal-glow"
+                    : "bg-surface-card border border-line text-ink-dim hover:border-brand hover:text-brand"
+                }`}
+              >
+                Daftar
+              </button>
+            </div>
+
+            {/* Sign in panel */}
+            <div
+              id="signin-panel"
+              role="tabpanel"
+              aria-labelledby="signin-tab"
+              hidden={isSignup}
+              className="space-y-4"
+            >
+              <div className="space-y-2">
+                <label htmlFor="email" className="text-xs font-bold uppercase tracking-widest text-ink-dim block">
+                  Email
+                </label>
+                <input
+                  id="email"
+                  ref={emailRef}
+                  type="email"
+                  autoComplete="email"
+                  name="email"
+                  value={formData.email}
+                  onChange={handleInputChange}
+                  required
+                  disabled={loading}
+                  className="w-full rounded-md border-2 border-line bg-surface-input py-4 px-4 text-base text-ink placeholder:text-ink-muted/40 disabled:opacity-50 transition-colors focus:border-brand focus:shadow-teal-glow focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label htmlFor="password" className="text-xs font-bold uppercase tracking-widest text-ink-dim block">
+                  PIN
+                </label>
+                <input
+                  id="password"
+                  type="password"
+                  autoComplete="current-password"
+                  name="password"
+                  value={formData.password}
+                  onChange={handleInputChange}
+                  required
+                  disabled={loading}
+                  className="w-full rounded-md border-2 border-line bg-surface-input py-4 px-4 text-base text-ink placeholder:text-ink-muted/40 disabled:opacity-50 transition-colors focus:border-brand focus:shadow-teal-glow focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Sign up panel */}
+            <div
+              id="signup-panel"
+              role="tabpanel"
+              aria-labelledby="signup-tab"
+              hidden={!isSignup}
+              className="space-y-4"
+            >
+              <div className="space-y-2">
+                <label htmlFor="displayName" className="text-xs font-bold uppercase tracking-widest text-ink-dim block">
+                  Nama tampilan
+                </label>
+                <input
+                  id="displayName"
+                  ref={displayNameRef}
+                  type="text"
+                  autoComplete="name"
+                  name="displayName"
+                  value={formData.displayName}
+                  onChange={handleInputChange}
+                  required
+                  disabled={loading}
+                  className="w-full rounded-md border-2 border-line bg-surface-input py-4 px-4 text-base text-ink placeholder:text-ink-muted/40 disabled:opacity-50 transition-colors focus:border-brand focus:shadow-teal-glow focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label htmlFor="email-signup" className="text-xs font-bold uppercase tracking-widest text-ink-dim block">
+                  Email
+                </label>
+                <input
+                  id="email-signup"
+                  type="email"
+                  autoComplete="email"
+                  name="email"
+                  value={formData.email}
+                  onChange={handleInputChange}
+                  required
+                  disabled={loading}
+                  className="w-full rounded-md border-2 border-line bg-surface-input py-4 px-4 text-base text-ink placeholder:text-ink-muted/40 disabled:opacity-50 transition-colors focus:border-brand focus:shadow-teal-glow focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label htmlFor="password-signup" className="text-xs font-bold uppercase tracking-widest text-ink-dim block">
+                  PIN
+                </label>
+                <input
+                  id="password-signup"
+                  type="password"
+                  autoComplete="new-password"
+                  name="password"
+                  value={formData.password}
+                  onChange={handleInputChange}
+                  required
+                  minLength={6}
+                  disabled={loading}
+                  className="w-full rounded-md border-2 border-line bg-surface-input py-4 px-4 text-base text-ink placeholder:text-ink-muted/40 disabled:opacity-50 transition-colors focus:border-brand focus:shadow-teal-glow focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {authError && (
+              <p
+                role="alert"
+                aria-live="assertive"
+                className="accent-bar-coral rounded-md bg-coral/12 px-4 py-3 text-sm font-medium text-coral-light text-center mb-4"
+              >
+                {authError}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading || !formData.email.trim() || !formData.password || (isSignup && !formData.displayName.trim())}
+              aria-busy={loading}
+              className="w-full rounded-full bg-accent-gold px-6 py-3.5 text-base font-extrabold tracking-wide text-on-gold shadow-accent-glow transition-transform hover:bg-accent-gold-light disabled:hover:bg-accent-gold disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading
+                ? isSignup
+                  ? "Mendaftarkan…"
+                  : "Memeriksa…"
+                : isSignup
+                ? "Daftar"
+                : "Masuk"}
+            </button>
+
+            <p className="text-center text-xs text-ink-muted mt-6">
+              {isSignup ? "Sudah punya akun? " : "Belum punya akun? "}
+              <button
+                type="button"
+                onClick={() => setAuthMode(isSignup ? "signin" : "signup")}
+                className="font-bold text-brand hover:underline"
+              >
+                {isSignup ? "Masuk" : "Daftar"}
+              </button>
+            </p>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Signed in: existing receiver UI with sign-out button ──
   return (
     <div className="relative h-dvh w-full overflow-hidden" style={{ background: "#000000" }}>
       {/* Video layer - always present, shown/hidden via opacity */}
@@ -302,6 +618,20 @@ export default function ReceiverPage() {
 
       {/* In-call controls */}
       {isInCall && <InCallControls />}
+
+      {/* Sign out button — top right, unobtrusive, doesn't obstruct incoming/call UI */}
+      <button
+        onClick={handleSignOut}
+        aria-label="Keluar"
+        title="Keluar"
+        className="absolute top-4 right-4 z-20 grid h-10 w-10 place-items-center rounded-full border border-line bg-surface-card/90 text-ink-dim shadow-sm transition-colors hover:border-coral hover:text-coral-light focus:outline-none focus:ring-2 focus:ring-coral"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <polyline points="16 17 21 12 16 7" />
+          <line x1="21" y1="12" x2="9" y2="12" />
+        </svg>
+      </button>
     </div>
   );
 }

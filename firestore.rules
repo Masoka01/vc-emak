@@ -49,7 +49,72 @@ service cloud.firestore {
       return request.resource.data.callId == resource.data.callId;
     }
 
+    // ── IDENTITY ─────────────────────────────────────────────────────────────
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // An admin is whoever has a document in /admins. That collection has no
+    // client-writable path, so it can only be provisioned with admin
+    // credentials — nobody can promote themselves by writing to it.
+    function isAdmin() {
+      return signedIn()
+          && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // ── ROSTER ───────────────────────────────────────────────────────────────
+
+    match /admins/{uid} {
+      // Only your own admin record, so a signed-in client can tell whether it is
+      // an admin. Deliberately not open to every signed-in user: that would let
+      // any receiver enumerate the whole admin roster.
+      //
+      // Note the isAdmin() helper does not depend on this. exists() inside a rule
+      // is evaluated server-side and needs no read permission on the document.
+      allow read: if isSelf(uid);
+
+      // No client writes here, ever. Provisioned once with admin credentials.
+      allow write: if false;
+    }
+
+    match /users/{uid} {
+      // The admin needs to see everyone in order to build a call list; a receiver
+      // only ever needs itself.
+      allow read: if isAdmin() || isSelf(uid);
+
+      // Registering writes your own profile, unapproved. Requiring
+      // approved == false here is what stops a receiver approving itself at
+      // signup — the field is pinned to false by the only rule that may create
+      // the document, and pinned by comparison in the self-update rule below.
+      allow create: if isSelf(uid)
+                    && request.resource.data.approved == false
+                    && request.resource.data.keys().hasOnly(
+                         ['displayName', 'approved', 'online', 'lastSeen', 'createdAt']);
+
+      // Approval is the admin's job alone.
+      allow update: if isAdmin();
+
+      // A receiver may refresh its own name and presence, but cannot move its
+      // own approval state in either direction.
+      allow update: if isSelf(uid)
+                    && request.resource.data.approved == resource.data.approved;
+
+      allow delete: if false;
+    }
+
     // VConnect signaling room.
+    //
+    // TRANSITIONAL — this room is still the old shared one and is still
+    // completely unauthenticated. It stays that way until the client is rewired
+    // to address rooms per receiver; tightening it before then would break
+    // every call, because the current client has no Firebase session to present.
+    // Do not treat this rule as the finished security model.
+    //
     // The room id is hardcoded because Firestore rules cannot read env vars.
     // Any other room id does not match this rule and falls through to deny.
     match /rooms/vc-ud589l6e1gq0vc4y22tp {

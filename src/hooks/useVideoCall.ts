@@ -288,6 +288,19 @@ export function useVideoCall() {
     setCallState("idle");
   }, [clearMedia, wakeLock]);
 
+  // Release the camera/mic when the receiver page goes away. The wakeLock
+  // object is a fresh literal every render, so `disarm` changes identity every
+  // render too — depending on it directly would run this cleanup on every
+  // render instead of only on unmount. The ref pins the latest disarm without
+  // subscribing to it.
+  const disarmRef = useRef(disarm);
+  disarmRef.current = disarm;
+  useEffect(() => {
+    return () => {
+      disarmRef.current();
+    };
+  }, []);
+
   /**
    * One deliberate tap. Chrome's autoplay policy refuses to play remote audio
    * that was never unlocked by a user gesture, so without this the receiver can
