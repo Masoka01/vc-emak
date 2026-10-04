@@ -13,26 +13,88 @@ rules_version = '2';
 //  id leaks (shared URL, screenshot, log file), anyone can write a fake
 //  offer/answer into that room.
 //
-//  The stronger option is Firebase Auth with read/write rules based on the
-//  authenticated user. That changes the receiver flow, because the receiver
-//  would have to sign in before auto-answer works.
+//  The rules below tighten the CALL LIFECYCLE, not identity. They make it
+//  impossible to answer a call twice, or to answer a call that has already been
+//  replaced by a newer one, and they stop one call's write from landing inside
+//  another. What they deliberately do NOT do is establish who is who: whoever
+//  writes first is still treated as the caller. Only Firebase Auth could do
+//  that, and it changes the receiver flow because the receiver would have to
+//  sign in before auto-answer works.
 //
 //  Rotating the room id means changing TWO files and redeploying the rules:
 //    1. the room id below
 //    2. NEXT_PUBLIC_ROOM_ID in .env.example / .env.local
 //  If only one of them changes, signaling is rejected entirely.
+//
+//  MIGRATION NOTE: reading resource.data.callId on a document that predates
+//  callId is an error, which denies the write. Any room document left over from
+//  before callIds existed must be deleted once when these rules go live, or the
+//  very first startCall after deploy is rejected. From then on no client can
+//  delete it: see the delete note on the room rule below.
 // ===========================================================================
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // A call-starting write: identifies itself, claims the room, and carries
+    // nothing else. An answer here would mean the caller answering itself.
+    function isCallStart() {
+      return request.resource.data.keys().hasOnly(['callId', 'offer', 'status', 'createdAt'])
+          && request.resource.data.callId is string
+          && request.resource.data.status == 'calling';
+    }
+
+    // The write belongs to the call that is currently in the document.
+    function isSameCall() {
+      return request.resource.data.callId == resource.data.callId;
+    }
+
     // VConnect signaling room.
     // The room id is hardcoded because Firestore rules cannot read env vars.
     // Any other room id does not match this rule and falls through to deny.
     match /rooms/vc-ud589l6e1gq0vc4y22tp {
-      allow read, write: if true;
+      // Open, because a receiver sitting idle with no session of its own has to
+      // be able to see that a call is ringing. This is the direct cost of having
+      // no auth: the SDP is readable by anyone who knows the room id.
+      allow read: if true;
+
+      allow create: if isCallStart();
+
+      // Starting a call over a live document is how a new call replaces an old
+      // one. Demanding a different callId is what makes that deliberate: every
+      // in-flight write belonging to the previous call now fails against these
+      // rules instead of quietly landing on top of the new call's offer.
+      allow update: if isCallStart()
+                    && request.resource.data.callId != resource.data.callId;
+
+      // Answering: once only, into the call that is actually live, and only
+      // while the caller is still waiting.
+      allow update: if isSameCall()
+                    && resource.data.status == 'calling'
+                    && !('answer' in resource.data)
+                    && request.resource.data.status == 'connected';
+
+      // Ending: only the call currently in progress can be ended. A stale tab
+      // writing "ended" onto a newer call is rejected rather than allowed to
+      // kill someone else's ringing phone.
+      allow update: if isSameCall()
+                    && resource.data.status in ['calling', 'connected']
+                    && request.resource.data.status == 'ended';
+
+      // Deliberately NO delete. Deleting the room document is precisely what used
+      // to tear calls down: it fires every client's watcher, which closes their
+      // peer connection, and the window before the next write is long enough for
+      // a live call to die in the middle. With delete unavailable there is no
+      // longer a code path that can do it. A finished document is inert — the
+      // next startCall overwrites it, and an incoming call is only ever reported
+      // for status "calling". Resetting the room by hand therefore needs
+      // firebase firestore:delete, which uses admin credentials and bypasses
+      // these rules.
 
       // ICE candidates from the caller (admin).
+      // Tagged with a callId so a client can ignore candidates belonging to a
+      // call it never took part in; the rules do not police that, the client
+      // does.
       match /callerCandidates/{candidateId} {
         allow read, write: if true;
       }

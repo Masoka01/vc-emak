@@ -23,7 +23,16 @@ export default function ReceiverPage() {
     setMicEnabled,
   } = useVideoCall();
 
-  const handleAnswer = useCallback(async () => {
+  // Which call is on offer, and which one this receiver has already answered.
+  // The room document fires many snapshots for a single call, so without these
+  // two the receiver answers the same call repeatedly.
+  const offeredCallIdRef = useRef<string | null>(null);
+  const answeredCallIdRef = useRef<string | null>(null);
+
+  const handleAnswer = useCallback(async (callId: string) => {
+    // Claim the call before the first await. Two taps on the incoming screen
+    // would otherwise both get past the guard below and answer the same call.
+    answeredCallIdRef.current = callId;
     setCallState("connecting");
     // `step` is advanced before each await so the catch can name the failing
     // operation. Without it a NotFoundError from getUserMedia and an
@@ -49,11 +58,25 @@ export default function ReceiverPage() {
       // closes this connection, stops the camera, and clears callState. Its
       // `setCallState("idle")` runs after the close, so it wins over the
       // "closed" that the close itself reports.
-      const cleanup = await answerCall(pc, setRemoteStream, disarm);
+      const cleanup = await answerCall(pc, setRemoteStream, callId, disarm);
       cleanupRef.current = cleanup;
     } catch (err) {
       const name = err instanceof Error ? err.name : typeof err;
       const message = err instanceof Error ? err.message : String(err);
+
+      // The call ended or was replaced while the receiver was answering. That
+      // is a race, not a failure, and telling someone to refresh a page that is
+      // working fine is the wrong response to it. Disarm releases the camera and
+      // returns to idle; the receiver re-arms for the next call.
+      if (
+        message === "Panggilan sudah berakhir" ||
+        message === "Panggilan sudah tidak aktif"
+      ) {
+        offeredCallIdRef.current = null;
+        disarm();
+        return;
+      }
+
       console.error(`[receiver] gagal pada langkah: ${step}`, { step, name, message, err });
       setCallState("error");
     }
@@ -75,14 +98,18 @@ export default function ReceiverPage() {
 
   const acceptCall = useCallback(async () => {
     clearIncoming();
+    // The prompt outlives the call it was raised for if the call is replaced in
+    // the meantime, so re-read the id here rather than trusting the render.
+    const callId = offeredCallIdRef.current;
+    if (!callId) return;
     // Answering from idle means opening the camera first: there is no stream to
     // send until the receiver is armed.
     const ready = await arm({ facing: "environment" });
-    if (ready) handleAnswer();
+    if (ready) handleAnswer(callId);
   }, [arm, handleAnswer, clearIncoming]);
 
   useEffect(() => {
-    const unsub = listenForCall((isIncoming) => {
+    const unsub = listenForCall((isIncoming, callId) => {
       // Cancel a pending auto-clear first: the room document fires several
       // snapshots while it still says "calling", and each of them must not
       // restart the countdown.
@@ -91,15 +118,27 @@ export default function ReceiverPage() {
         incomingTimerRef.current = null;
       }
 
-      if (!isIncoming) {
+      if (!isIncoming || !callId) {
         setIncoming(false);
+        offeredCallIdRef.current = null;
         return;
       }
+
+      // Already answered this exact call. The room document still reports
+      // "calling" for the whole window before our own answer lands, so without
+      // this the receiver would answer the same call twice.
+      if (answeredCallIdRef.current === callId) {
+        setIncoming(false);
+        offeredCallIdRef.current = null;
+        return;
+      }
+
+      offeredCallIdRef.current = callId;
 
       // An armed receiver answers by itself, so prompting would only flash.
       if ((callState === "idle" || callState === "ended") && armed) {
         setIncoming(false);
-        handleAnswer();
+        void handleAnswer(callId);
         return;
       }
 
