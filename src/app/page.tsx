@@ -5,12 +5,21 @@ import { listenForCall, answerCall } from "@/lib/webrtc";
 import { useVideoCall } from "@/hooks/useVideoCall";
 import {
   observeAuth,
+  observeProfile,
+  publishBuild,
   signIn,
   signUp,
   signOutUser,
   startPresence,
   type SessionUser,
+  type ReceiverProfile,
 } from "@/lib/auth";
+
+// Marker for the client build currently running here. Published best-effort to
+// the receiver's own profile on sign-in, so the admin can tell a tablet that
+// is genuinely offline from one that is online but still running the retired
+// shared-room code. Bump this string whenever the signaling contract changes.
+const CURRENT_BUILD_MARKER = "per-receiver-rooms-v1";
 
 export default function ReceiverPage() {
   const {
@@ -26,10 +35,41 @@ export default function ReceiverPage() {
     armed,
     arm,
     disarm,
+    setActiveCall,
     permission,
     micEnabled,
     setMicEnabled,
   } = useVideoCall();
+
+  const [authStatus, setAuthStatus] = useState<"checking" | "unauthenticated" | "authenticated">("checking");
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [profile, setProfile] = useState<ReceiverProfile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+
+  // Observe auth state — fires once immediately with current session
+  useEffect(() => {
+    const unsub = observeAuth((u) => {
+      setUser(u);
+      setAuthStatus(u ? "authenticated" : "unauthenticated");
+    });
+    return unsub;
+  }, []);
+
+  // Subscribe to this receiver's profile to learn approval status.
+  // Runs when user changes; cleans up on unmount or user change.
+  useEffect(() => {
+    if (!user?.uid) {
+      setProfile(null);
+      setProfileLoading(false);
+      return;
+    }
+    setProfileLoading(true);
+    const unsub = observeProfile(user.uid, (p) => {
+      setProfile(p);
+      setProfileLoading(false);
+    });
+    return unsub;
+  }, [user?.uid]);
 
   // Which call is on offer, and which one this receiver has already answered.
   // The room document fires many snapshots for a single call, so without these
@@ -37,7 +77,7 @@ export default function ReceiverPage() {
   const offeredCallIdRef = useRef<string | null>(null);
   const answeredCallIdRef = useRef<string | null>(null);
 
-  const handleAnswer = useCallback(async (callId: string) => {
+  const handleAnswer = useCallback(async (roomId: string, callId: string) => {
     // Claim the call before the first await. Two taps on the incoming screen
     // would otherwise both get past the guard below and answer the same call.
     answeredCallIdRef.current = callId;
@@ -66,8 +106,11 @@ export default function ReceiverPage() {
       // closes this connection, stops the camera, and clears callState. Its
       // `setCallState("idle")` runs after the close, so it wins over the
       // "closed" that the close itself reports.
-      const cleanup = await answerCall(pc, setRemoteStream, callId, disarm);
+      const cleanup = await answerCall(pc, setRemoteStream, roomId, callId, disarm);
       cleanupRef.current = cleanup;
+      // Record the call this instance joined, so endCall hangs up exactly this
+      // room and call without taking arguments.
+      setActiveCall(roomId, callId);
     } catch (err) {
       const name = err instanceof Error ? err.name : typeof err;
       const message = err instanceof Error ? err.message : String(err);
@@ -88,7 +131,7 @@ export default function ReceiverPage() {
       console.error(`[receiver] gagal pada langkah: ${step}`, { step, name, message, err });
       setCallState("error");
     }
-  }, [initPC, getLocalStream, setRemoteStream, setCallState, cleanupRef, disarm]);
+  }, [initPC, getLocalStream, setRemoteStream, setCallState, cleanupRef, disarm, setActiveCall]);
 
   // An idle receiver cannot answer on its own, so an incoming call has to be
   // visible. Otherwise the caller waits on a connection the receiver is not
@@ -109,15 +152,23 @@ export default function ReceiverPage() {
     // The prompt outlives the call it was raised for if the call is replaced in
     // the meantime, so re-read the id here rather than trusting the render.
     const callId = offeredCallIdRef.current;
-    if (!callId) return;
+    // The room is always this receiver's own: per-receiver signaling addresses
+    // rooms by the receiver's Auth uid, so no shared room id is ever needed.
+    const roomId = user?.uid;
+    if (!roomId || !callId) return;
     // Answering from idle means opening the camera first: there is no stream to
     // send until the receiver is armed.
     const ready = await arm({ facing: "environment" });
-    if (ready) handleAnswer(callId);
-  }, [arm, handleAnswer, clearIncoming]);
+    if (ready) handleAnswer(roomId, callId);
+  }, [arm, handleAnswer, clearIncoming, user]);
 
+  // Listen on this receiver's own room. The effect re-subscribes whenever the
+  // signed-in user changes, and unsubscribes on sign-out — a signed-out
+  // receiver must not keep a listener (and a camera) alive on someone's room.
   useEffect(() => {
-    const unsub = listenForCall((isIncoming, callId) => {
+    const roomId = user?.uid;
+    if (!roomId) return;
+    const unsub = listenForCall(roomId, (isIncoming, callId) => {
       // Cancel a pending auto-clear first: the room document fires several
       // snapshots while it still says "calling", and each of them must not
       // restart the countdown.
@@ -146,7 +197,7 @@ export default function ReceiverPage() {
       // An armed receiver answers by itself, so prompting would only flash.
       if ((callState === "idle" || callState === "ended") && armed) {
         setIncoming(false);
-        void handleAnswer(callId);
+        void handleAnswer(roomId, callId);
         return;
       }
 
@@ -160,15 +211,13 @@ export default function ReceiverPage() {
       unsub();
       if (incomingTimerRef.current) clearTimeout(incomingTimerRef.current);
     };
-  }, [callState, armed, handleAnswer]);
+  }, [callState, armed, handleAnswer, user]);
 
   const isInCall = callState === "connecting" || callState === "connected";
   const isArmed = armed && permission === "granted";
   const isPermissionDenied = permission === "denied";
 
-  // ── Auth state ──
-  const [authStatus, setAuthStatus] = useState<"checking" | "unauthenticated" | "authenticated">("checking");
-  const [user, setUser] = useState<SessionUser | null>(null);
+  // ── Auth state (identity lives above, next to the call handlers) ──
   const [authError, setAuthError] = useState("");
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [loading, setLoading] = useState(false);
@@ -176,21 +225,23 @@ export default function ReceiverPage() {
   const emailRef = useRef<HTMLInputElement>(null);
   const displayNameRef = useRef<HTMLInputElement>(null);
 
-  // Observe auth state — fires once immediately with current session
-  useEffect(() => {
-    const unsub = observeAuth((u) => {
-      setUser(u);
-      setAuthStatus(u ? "authenticated" : "unauthenticated");
-    });
-    return unsub;
-  }, []);
-
   // Start presence heartbeat when signed in
   useEffect(() => {
     if (user?.uid) {
       const cleanup = startPresence(user.uid);
       return cleanup;
     }
+  }, [user?.uid]);
+
+  // Publish this build's marker best-effort when signed in, so the admin can
+  // tell an outdated-but-online tablet apart from a genuinely offline one. A
+  // failure here must never break the receiver: presence, listening, and
+  // answering all work without it.
+  useEffect(() => {
+    if (!user?.uid) return;
+    void publishBuild(user.uid, CURRENT_BUILD_MARKER).catch(() => {
+      // Best-effort version stamp only; stay silent.
+    });
   }, [user?.uid]);
 
   // Focus email field when auth screen appears
@@ -405,7 +456,7 @@ export default function ReceiverPage() {
 
               <div className="space-y-2">
                 <label htmlFor="password" className="text-xs font-bold uppercase tracking-widest text-ink-dim block">
-                  PIN
+                  Kata sandi
                 </label>
                 <input
                   id="password"
@@ -466,7 +517,7 @@ export default function ReceiverPage() {
 
               <div className="space-y-2">
                 <label htmlFor="password-signup" className="text-xs font-bold uppercase tracking-widest text-ink-dim block">
-                  PIN
+                  Kata sandi
                 </label>
                 <input
                   id="password-signup"
@@ -524,6 +575,33 @@ export default function ReceiverPage() {
     );
   }
 
+  // ── Signed in: profile loading or approved / waiting for approval ──
+  if (profileLoading) {
+    return (
+      <div className="relative h-dvh w-full overflow-hidden" style={{ background: "#000000" }}>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="h-10 w-10 rounded-full border-2 border-teal-bg border-t-teal animate-spin" aria-hidden="true" />
+          <span className="sr-only">Memuat profil…</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Profile loaded but missing (shouldn't happen after signUp, but guard anyway)
+  if (!profile) {
+    return (
+      <div className="relative h-dvh w-full overflow-hidden" style={{ background: "#000000" }}>
+        <div className="absolute inset-0 flex items-center justify-center px-6">
+          <p className="accent-bar-coral rounded-md bg-coral/12 px-4 py-3 text-sm font-medium text-coral-light text-center">
+            Profil tidak ditemukan. Keluar dan masuk lagi.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const isApproved = profile.approved === true;
+
   // ── Signed in: existing receiver UI with sign-out button ──
   return (
     <div className="relative h-dvh w-full overflow-hidden" style={{ background: "#000000" }}>
@@ -541,7 +619,7 @@ export default function ReceiverPage() {
           mirroring it back would only duplicate what the caller already has.
           The full-screen video above is the caller, which is the only thing
           worth the screen here. */}
-      {/* Idle / Armed / Permission Denied - centered logo */}
+      {/* Idle / Armed / Permission Denied / Waiting for approval - centered logo */}
       {!isInCall && !incoming && callState !== "error" && (
         <div className="absolute inset-0 flex items-center justify-center px-6 animate-fade-in">
           <div className="relative flex flex-col items-center gap-6 text-center">
@@ -568,6 +646,21 @@ export default function ReceiverPage() {
               <p className="max-w-xs text-sm text-ink-dim px-4">
                 Kamera atau mikrofon ditolak. Izinkan akses di pengaturan browser lalu ketuk logo lagi.
               </p>
+            )}
+
+            {!isApproved && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="max-w-xs space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-center"
+              >
+                <p className="text-sm font-medium text-amber-300">
+                  Menunggu persetujuan admin
+                </p>
+                <p className="text-xs text-ink-dim">
+                  Akun terdaftar. Panggilan belum bisa masuk sampai disetujui.
+                </p>
+              </div>
             )}
           </div>
         </div>

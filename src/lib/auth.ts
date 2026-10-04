@@ -38,10 +38,18 @@ export type SessionUser = {
 export type ReceiverProfile = {
   uid: string;
   displayName: string;
+  email: string;
   approved: boolean;
   online: boolean;
   lastSeen: number;
   createdAt: number;
+  /**
+   * Version marker the receiver writes on sign-in. It is the only way an admin
+   * can tell a tablet that is genuinely offline from one that is online but
+   * still running code that rings the retired shared room — the failure this
+   * app is most likely to hit in the field.
+   */
+  build?: string;
 };
 
 /** How often a signed-in receiver refreshes lastSeen. */
@@ -67,13 +75,13 @@ function authErrorMessage(err: unknown): string {
     case "auth/invalid-credential":
     case "auth/wrong-password":
     case "auth/user-not-found":
-      return "Email atau PIN salah.";
+      return "Email atau kata sandi salah.";
     case "auth/email-already-in-use":
       return "Email itu sudah terdaftar. Coba masuk saja.";
     case "auth/invalid-email":
       return "Format email tidak valid.";
     case "auth/weak-password":
-      return "PIN terlalu lemah. Pakai minimal 6 karakter.";
+      return "Kata sandi terlalu lemah. Pakai minimal 6 karakter.";
     case "auth/too-many-requests":
       return "Terlalu banyak percobaan. Tunggu sebentar lalu coba lagi.";
     case "auth/network-request-failed":
@@ -158,6 +166,7 @@ export async function signUp(
     await updateProfile(cred.user, { displayName: name });
     await setDoc(doc(db, "users", cred.user.uid), {
       displayName: name,
+      email: cred.user.email ?? email,
       approved: false,
       online: true,
       lastSeen: Date.now(),
@@ -193,10 +202,12 @@ function toProfile(uid: string, data: Record<string, unknown>): ReceiverProfile 
   return {
     uid,
     displayName: String(data.displayName ?? "Receiver"),
+    email: String(data.email ?? ""),
     approved: data.approved === true,
     online: data.online === true,
     lastSeen: Number(data.lastSeen ?? 0),
     createdAt: Number(data.createdAt ?? 0),
+    build: data.build === undefined ? undefined : String(data.build),
   };
 }
 
@@ -267,4 +278,22 @@ export function startPresence(uid: string): () => void {
     window.removeEventListener("pagehide", goOffline);
     goOffline();
   };
+}
+
+/**
+ * Publish the running client version, plus the account email, on the receiver's
+ * own profile.
+ *
+ * Both fields are safe for a receiver to write because the rules let a user
+ * update their own document as long as `approved` is left alone. The email is
+ * included here rather than only at sign-up so that accounts created before this
+ * field existed are backfilled the next time their tablet loads this build.
+ */
+export async function publishBuild(uid: string, build: string): Promise<void> {
+  const user = currentUser();
+  await setDoc(
+    userDoc(uid),
+    { build, email: user?.email ?? "" },
+    { merge: true }
+  );
 }

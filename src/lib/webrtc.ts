@@ -9,11 +9,6 @@ import {
   getDocs,
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { getRoomId } from "./env";
-
-// No public fallback: a guessable default room id would defeat the point of a
-// private intercom.
-const ROOM_ID = getRoomId();
 
 // STUN servers publik (Google)
 const ICE_SERVERS: RTCConfiguration = {
@@ -29,9 +24,11 @@ export function createPeerConnection(): RTCPeerConnection {
 
 // ─── CALL IDENTITY ───────────────────────────────────────────────────────────
 
-// The call currently live on this client. A page cannot be in two calls at
-// once, so this does not need threading through every caller.
-let activeCallId: string | null = null;
+// Deliberately no module-level call state. The room and the call this client
+// is in travel as arguments on every function instead, and useVideoCall owns
+// the active pair per hook instance — two tabs used to share one
+// module-level activeCallId, so tab B starting a call overwrote the id tab A
+// would later hang up with.
 
 function newCallId(): string {
   return `${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
@@ -47,21 +44,21 @@ function isPermissionDenied(err: unknown): boolean {
 
 export async function startCall(
   pc: RTCPeerConnection,
-  onRemoteStream: (stream: MediaStream) => void
+  onRemoteStream: (stream: MediaStream) => void,
+  roomId: string
 ): Promise<() => void> {
-  const roomRef = doc(db, "rooms", ROOM_ID);
+  const roomRef = doc(db, "rooms", roomId);
 
   // Every call gets its own identity, and every write below carries it. That is
   // what lets the rules tell "the receiver answering this call" apart from "a
   // late answer to the previous call that arrived after a new one had begun".
   const callId = newCallId();
-  activeCallId = callId;
 
   // Clear the last call's ICE candidates. Deliberately NOT deleting the room
   // document: a deleted room document fires the receiver's watcher, which tears
   // down its peer connection, and that window between delete and re-create is
   // where calls used to kill themselves.
-  await clearCandidates();
+  await clearCandidates(roomId);
 
   // Tangkap ICE candidates caller
   const callerCandidates = collection(roomRef, "callerCandidates");
@@ -118,9 +115,10 @@ export async function startCall(
 // ─── RECEIVER ────────────────────────────────────────────────────────────────
 
 export function listenForCall(
+  roomId: string,
   onStatusChange: (incoming: boolean, callId: string | null) => void
 ): () => void {
-  const roomRef = doc(db, "rooms", ROOM_ID);
+  const roomRef = doc(db, "rooms", roomId);
   return onSnapshot(roomRef, (snap) => {
     const data = snap.data();
     // Report both directions. An incoming-call indicator has to be able to
@@ -136,10 +134,11 @@ export function listenForCall(
 export async function answerCall(
   pc: RTCPeerConnection,
   onRemoteStream: (stream: MediaStream) => void,
+  roomId: string,
   callId: string,
   onRemoteHangup?: () => void
 ): Promise<() => void> {
-  const roomRef = doc(db, "rooms", ROOM_ID);
+  const roomRef = doc(db, "rooms", roomId);
   const roomSnap = await getDoc(roomRef);
   const roomData = roomSnap.data();
 
@@ -213,11 +212,10 @@ export async function answerCall(
     // is not this call being hung up.
     if (data?.callId !== callId) return;
     if (data?.status === "ended") {
+      // Tear down the peer connection and tell the owner explicitly, so the
+      // receiver releases its camera and returns to armed instead of sitting in
+      // a half-torn-down call waiting on connection-state inference.
       pc.close();
-      // Closing the peer connection only sets connectionState to "closed",
-      // which the receiver would have to guess the meaning of. Say it plainly,
-      // so the receiver can return to its idle state deliberately instead of
-      // sitting in a half-torn-down call with the camera still held open.
       onRemoteHangup?.();
     }
   });
@@ -230,23 +228,21 @@ export async function answerCall(
 
 // ─── SHARED ──────────────────────────────────────────────────────────────────
 
-export async function hangUp(): Promise<void> {
-  const roomRef = doc(db, "rooms", ROOM_ID);
-  const callId = activeCallId;
-  activeCallId = null;
+export async function hangUp(roomId: string, callId: string): Promise<void> {
+  const roomRef = doc(db, "rooms", roomId);
 
   // Mark the call ended, but only if it is still the one we are in — the rules
   // reject the write otherwise, which is exactly what should happen if the
-  // receiver already moved on to a new call.
-  if (callId) {
-    await setDoc(
-      roomRef,
-      { callId, status: "ended", endedAt: Date.now() },
-      { merge: true }
-    );
-  }
+  // other side already moved on to a new call. Both halves of the identity
+  // arrive as arguments (owned per hook instance by useVideoCall), so two tabs
+  // can never hang up with each other's callId.
+  await setDoc(
+    roomRef,
+    { callId, status: "ended", endedAt: Date.now() },
+    { merge: true }
+  );
 
-  await clearCandidates();
+  await clearCandidates(roomId);
 }
 
 // Clearing the room document was the source of most of the flakiness: deleting
@@ -255,13 +251,27 @@ export async function hangUp(): Promise<void> {
 // down in the middle. Nothing needs the document gone — the next call simply
 // overwrites it, and a leftover "ended" document is inert because an incoming
 // call is only ever reported for status "calling".
-async function clearCandidates(): Promise<void> {
-  const roomRef = doc(db, "rooms", ROOM_ID);
+async function clearCandidates(roomId: string): Promise<void> {
+  const roomRef = doc(db, "rooms", roomId);
 
   const subcollections = ["callerCandidates", "receiverCandidates"];
   for (const sub of subcollections) {
     const colRef = collection(roomRef, sub);
     const snaps = await getDocs(colRef);
-    await Promise.all(snaps.docs.map((d) => deleteDoc(d.ref)));
+    // A leftover candidate is inert — every candidate carries the callId it
+    // was gathered for, and both sides ignore candidates from any other call
+    // — so a delete the rules refuse is not worth failing the call over. It
+    // happens by design now: under per-receiver rooms the admin may not delete
+    // the receiver's candidates and the receiver may not delete the admin's,
+    // so whichever side tidies up leaves the other side's behind for the next
+    // startCall to sweep.
+    await Promise.all(
+      snaps.docs.map((d) =>
+        deleteDoc(d.ref).catch((err: unknown) => {
+          if (isPermissionDenied(err)) return;
+          throw err;
+        })
+      )
+    );
   }
 }

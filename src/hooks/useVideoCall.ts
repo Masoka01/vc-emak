@@ -28,6 +28,23 @@ const DEVICE_MISSING = ["NotFoundError", "OverconstrainedError", "NotReadableErr
 export function useVideoCall() {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+
+  // The call this hook instance is currently in. A ref, not module state and
+  // not React state: refs are per hook instance, so two tabs (two instances)
+  // can never overwrite each other's identity the way the old module-level
+  // activeCallId in webrtc.ts did — tab B starting a call used to replace the
+  // id tab A's endCall would later hang up with. endCall reads it
+  // synchronously, so no re-render timing is involved either. Recorded via
+  // setActiveCall after startCall/answerCall resolve; cleared by endCall and
+  // disarm.
+  const activeCallRef = useRef<{ roomId: string; callId: string } | null>(null);
+
+  // Records the call this instance started or answered, so endCall can hang
+  // up exactly that call without taking arguments. Called by the page after
+  // startCall/answerCall resolve, once both halves of the identity are known.
+  const setActiveCall = useCallback((roomId: string, callId: string) => {
+    activeCallRef.current = { roomId, callId };
+  }, []);
   const [callState, setCallState] = useState<CallState>("idle");
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -280,6 +297,9 @@ export function useVideoCall() {
   const disarm = useCallback(() => {
     cleanupRef.current?.();
     cleanupRef.current = null;
+    // Full teardown drops the call identity too: a later arm starts a new
+    // episode, and it must not inherit the previous call's room and id.
+    activeCallRef.current = null;
     pcRef.current?.close();
     pcRef.current = null;
     clearMedia();
@@ -313,6 +333,12 @@ export function useVideoCall() {
       // already running, so an answer path can arm-then-answer unconditionally.
       if (armed) return true;
 
+      // A fresh arm opens media for a new call episode, so any identity left
+      // over from a previous episode must not leak into that episode's
+      // endCall. (The early return above keeps a mid-call re-arm from touching
+      // the live call's identity.)
+      activeCallRef.current = null;
+
       try {
         await getLocalStream(opts);
         setPermission("granted");
@@ -331,7 +357,19 @@ export function useVideoCall() {
   const endCall = useCallback(async () => {
     cleanupRef.current?.();
     cleanupRef.current = null;
-    await hangUp();
+    // Hang up exactly the call this instance joined. The identity is captured
+    // and cleared before the write, so a concurrent start cannot slip a newer
+    // call in between and a second endCall cannot mark that newer call ended
+    // by mistake.
+    const active = activeCallRef.current;
+    activeCallRef.current = null;
+    // No identity recorded — a page that has not adopted setActiveCall yet, or
+    // a stray press with no live call — means there is nothing to mark ended
+    // in Firestore. Local teardown below still runs, so the camera and peer
+    // connection are never left held open by a missing identity.
+    if (active) {
+      await hangUp(active.roomId, active.callId);
+    }
     pcRef.current?.close();
     pcRef.current = null;
     clearMedia();
@@ -361,5 +399,6 @@ export function useVideoCall() {
     videoEnabled,
     setVideoEnabled,
     cameraAvailable,
+    setActiveCall,
   };
 }

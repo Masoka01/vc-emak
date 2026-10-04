@@ -9,15 +9,19 @@ Bisa di-install sebagai aplikasi native (PWA) di HP maupun desktop.
 
 ```
 /              → Halaman Receiver (tunggu panggilan, auto-answer)
-/admin         → Halaman Caller/Admin (PIN → call)
+/admin         → Halaman Caller/Admin (pilih receiver → call)
 
-WebRTC Signaling via Firestore:
-  rooms/{ROOM_ID}
+WebRTC Signaling via Firestore, satu room per receiver (di alamat Auth uid):
+  rooms/{receiverUid}
     ├── offer / answer (SDP)
     ├── status: "calling" | "connected" | "ended"
     ├── callerCandidates/  (ICE candidates dari admin)
     └── receiverCandidates/ (ICE candidates dari receiver)
 ```
+
+Receiver mendaftar sendiri dari aplikasinya (email + kata sandi) lalu menunggu
+disetujui admin. Hanya receiver yang `approved` yang bisa dihubungi — aturannya
+ditegakkan di `firestore.rules`, bukan di client.
 
 ---
 
@@ -62,20 +66,23 @@ NEXT_PUBLIC_FIREBASE_PROJECT_ID=...
 NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=...
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
 NEXT_PUBLIC_FIREBASE_APP_ID=...
-
-ADMIN_PIN=pinrahasiakamu123
-NEXT_PUBLIC_ROOM_ID=vc-xxxxxxxxxxxxxxxxxxxx
 ```
+
+Tidak ada lagi variabel room atau PIN. Setiap receiver signaling di room-nya
+sendiri (`rooms/<uid Auth-nya>`), jadi tidak ada id bersama yang perlu
+disamakan antara env dan rules.
 
 Dua hal yang paling sering jadi sumber masalah:
 
-- **`ADMIN_PIN` wajib ada.** Kalau kosong, `/api/verify-pin` membalas HTTP 500
-  `server_misconfigured` dan halaman login admin **selalu gagal** — bukan karena
-  PIN salah, tapi karena tidak ada PIN untuk dicocokkan. Kalau kamu lihat
-  "PIN salah" padahal tidak pernah salah ketik, cek variabel ini dulu.
-- **`NEXT_PUBLIC_ROOM_ID` harus sama persis** dengan room id yang di-hardcode di
-  `firestore.rules`. Firestore rules tidak bisa membaca env, jadi kalau keduanya
-  berbeda, semua request signaling ditolak `PERMISSION_DENIED`.
+- **Receiver baru belum disetujui.** Pendaftaran menulis profil dengan
+  `approved: false`, dan rules menolak panggilan ke receiver yang belum
+  disetujui. Kalau admin tidak bisa menghubungi receiver yang terlihat online,
+  cek dulu field `approved` di dokumen `users/<uid>`-nya.
+- **Admin tidak dikenali.** Yang dianggap admin hanyalah uid yang punya dokumen
+  di koleksi `admins`. Koleksi itu tidak bisa ditulis dari client, jadi buat
+  isinya sekali dengan kredensial admin (Firebase Console atau
+  `firebase firestore:set`). Tanpa itu, semua tulis signaling ditolak
+  `PERMISSION_DENIED`.
 
 ### 4. Icons PWA
 
@@ -127,9 +134,11 @@ npx vercel --prod
 ## Alur Kerja
 
 ```
-Admin buka /admin → input PIN → tekan "Mulai Panggilan"
-    ↓ Firestore: tulis offer + callerCandidates
-Receiver buka / → onSnapshot detect "calling"
+Receiver daftar dari / → profil users/{uid} terbit dengan approved: false
+Admin menyetujui receiver → approved: true
+Admin buka /admin → pilih receiver → tekan "Mulai Panggilan"
+    ↓ Firestore: tulis offer + callerCandidates ke rooms/{receiverUid}
+Receiver buka / → onSnapshot di rooms/{uid-nya sendiri} detect "calling"
     ↓ Auto answer → tulis answer + receiverCandidates
 Admin & Receiver exchange ICE candidates via Firestore
     ↓ WebRTC peer-to-peer connection established
@@ -140,20 +149,17 @@ Video call berlangsung langsung P2P (tidak lewat server)
 
 ## Catatan Keamanan
 
-- **Tidak ada autentikasi di Firestore.** Rules-nya `allow read, write: if true`
-  untuk satu room tertentu. Yang melindungi aplikasi ini adalah room id yang
-  sulit ditebak — bukan login. Kalau room id bocor (URL yang dibagikan, screenshot,
-  log), siapa pun bisa menulis offer/answer palsu ke room itu dan menyamar
-  sebagai caller atau receiver.
-- Room id di-hardcode di `firestore.rules` **dan** ada di `NEXT_PUBLIC_ROOM_ID`.
-  Mengganti room id berarti mengubah keduanya lalu deploy ulang rules.
-- PIN disimpan di server (env `ADMIN_PIN`), tidak pernah dikirim ke client secara
-  plain, dan dibandingkan dengan `timingSafeEqual`. Endpoint-nya dibatasi 5x gagal
-  per 15 menit per IP — perlu diingat ini masih in-memory, jadi hilang saat
-  server cold start dan tidak dibagi antar instance.
-- Untuk proteksi yang lebih kuat, langkah berikutnya adalah Firebase Auth dengan
-  rules berbasis user. Perlu diperhitungkan: receiver harus login dulu sebelum
-  auto-answer bisa jalan.
+- **Identitas dari Firebase Auth, ditegakkan di rules.** Receiver hanya bisa
+  membaca/menjawab room-nya sendiri; admin membaca semua room dan satu-satunya
+  yang boleh memulai panggilan — itu pun hanya ke receiver yang ada dan
+  `approved`. Room id yang bocor tidak lagi berguna bagi orang asing: tanpa
+  sesi yang cocok, rules menolak tulisnya.
+- Pendaftaran menulis profil sendiri dengan `approved: false`, dan rules
+  mengunci field itu supaya receiver tidak bisa menyetujui dirinya sendiri —
+  persetujuan mutlak pekerjaan admin.
+- Koleksi `admins` tidak punya jalur tulis dari client; hanya bisa diisi
+  dengan kredensial admin, jadi tidak ada yang bisa mengangkat dirinya sendiri
+  jadi admin.
 - WebRTC video/audio stream: **end-to-end, tidak lewat Firebase**.
 
 ---
@@ -200,9 +206,6 @@ prefix sendiri; mendaftarkan plugin yang tidak terpasang akan menggagalkan build
   penggantinya. Spinner saat menyambungkan tetap dipakai karena hanya hidup
   sekitar 2 detik. Kalau memang butuh animasi, pastikan sifatnya finite atau
   hanya muncul saat ada aksi pengguna.
-- **Jangan pasang `maxLength` di input PIN.** `maxLength` memotong teks mentah
-  sebelum filter digit jalan, jadi paste `"PIN: 56028717"` hanya menghasilkan
-  `"560"`. Batas panjang sudah ditangani `.slice(0, PIN_LENGTH)` di `onChange`.
 - **Jangan akses `process.env` secara dinamis di kode client.** Next.js hanya
   meng-inline `process.env.NEXT_PUBLIC_*` kalau ditulis sebagai akses properti
   literal. `process.env[key]` lolos ke runtime browser, tempat `process.env`
@@ -213,8 +216,6 @@ prefix sendiri; mendaftarkan plugin yang tidak terpasang akan menggagalkan build
 ### Sisa pekerjaan
 
 - **Belum ada test suite.** Semua verifikasi selama ini manual lewat browser.
-  Kalau mau menambah, titik paling berharga adalah `src/lib/session.ts`
-  (token HMAC) dan endpoint `/api/verify-pin` (rate limit + timing-safe compare).
 - **Rules Firestore belum di-deploy** di environment ini. Jalankan
   `npm run deploy:rules`; sampai itu, signalling tetap `PERMISSION_DENIED`.
 - **Ikon PWA masih 404.** `public/icons/icon-192.png` dan sejenisnya belum

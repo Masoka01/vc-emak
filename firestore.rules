@@ -4,33 +4,27 @@ rules_version = '2';
 //  SECURITY MODEL - READ THIS FIRST
 // ===========================================================================
 //
-//  There is NO authentication on the Firestore room in this project. Video is
-//  peer-to-peer, but the SDP offer/answer and the ICE candidates travel through
-//  Firestore, so anyone who can write to this room can impersonate the caller
-//  or the receiver.
+//  Signaling (the SDP offer/answer and ICE candidates) travels through
+//  Firestore room documents, so the rules below decide who may ring whom.
+//  Rooms are per receiver: /rooms/{receiverUid} is one receiver's own room,
+//  addressed by their Firebase Auth uid.
 //
-//  What actually protects the app is the room id being unguessable. If the room
-//  id leaks (shared URL, screenshot, log file), anyone can write a fake
-//  offer/answer into that room.
+//  Identity comes from Firebase Auth. A receiver reads and answers only its
+//  own room; an admin reads every room and is the only side that may start or
+//  replace a call, and only into a room whose user exists and is approved. A
+//  leaked room id no longer lets a stranger ring, answer, or end someone
+//  else's call — without a matching session these rules simply deny.
 //
-//  The rules below tighten the CALL LIFECYCLE, not identity. They make it
-//  impossible to answer a call twice, or to answer a call that has already been
-//  replaced by a newer one, and they stop one call's write from landing inside
-//  another. What they deliberately do NOT do is establish who is who: whoever
-//  writes first is still treated as the caller. Only Firebase Auth could do
-//  that, and it changes the receiver flow because the receiver would have to
-//  sign in before auto-answer works.
+//  The CALL LIFECYCLE inside each room is deliberately narrow: a start claims
+//  the room with a fresh callId, an answer lands exactly once into the live
+//  call while the caller is still waiting, and only the live call can be
+//  ended. Every write carries the callId it belongs to, so a late write from
+//  a previous call fails instead of landing on top of the new one.
 //
-//  Rotating the room id means changing TWO files and redeploying the rules:
-//    1. the room id below
-//    2. NEXT_PUBLIC_ROOM_ID in .env.example / .env.local
-//  If only one of them changes, signaling is rejected entirely.
-//
-//  MIGRATION NOTE: reading resource.data.callId on a document that predates
-//  callId is an error, which denies the write. Any room document left over from
-//  before callIds existed must be deleted once when these rules go live, or the
-//  very first startCall after deploy is rejected. From then on no client can
-//  delete it: see the delete note on the room rule below.
+//  (History: there used to be a single shared room,
+//  /rooms/vc-ud589l6e1gq0vc4y22tp, with no auth at all. It is kept below as a
+//  read-only legacy rule until every receiver is confirmed on per-receiver
+//  rooms, then it can be retired.)
 // ===========================================================================
 
 service cloud.firestore {
@@ -91,10 +85,15 @@ service cloud.firestore {
       // approved == false here is what stops a receiver approving itself at
       // signup — the field is pinned to false by the only rule that may create
       // the document, and pinned by comparison in the self-update rule below.
+      //
+      // hasOnly is an allowlist, so it has to name every field signUp() writes.
+      // It lists `email` because the admin roster identifies receivers by it;
+      // an account created before that field existed is backfilled by the
+      // receiver's next publishBuild(), which is a merge and so an update.
       allow create: if isSelf(uid)
                     && request.resource.data.approved == false
                     && request.resource.data.keys().hasOnly(
-                         ['displayName', 'approved', 'online', 'lastSeen', 'createdAt']);
+                         ['displayName', 'email', 'approved', 'online', 'lastSeen', 'createdAt']);
 
       // Approval is the admin's job alone.
       allow update: if isAdmin();
@@ -107,16 +106,94 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // VConnect signaling room.
+    // VConnect signaling rooms, one per receiver, addressed by Auth uid.
     //
-    // TRANSITIONAL — this room is still the old shared one and is still
-    // completely unauthenticated. It stays that way until the client is rewired
-    // to address rooms per receiver; tightening it before then would break
-    // every call, because the current client has no Firebase session to present.
-    // Do not treat this rule as the finished security model.
+    // A receiver reads only its own room; the admin reads every room in order
+    // to place calls. Neither side — and no stranger holding a room id — can
+    // touch anyone else's room, because every write path below names exactly
+    // one of the two parties to this room.
+    match /rooms/{receiverUid} {
+      // A receiver watching for its own incoming call, or an admin building
+      // the call list. Anyone else, including another receiver, learns
+      // nothing — so one receiver can never even see that another is ringing.
+      allow read: if isSelf(receiverUid) || isAdmin();
+
+      // Call start: the admin only, and only into a room whose receiver both
+      // exists and is approved. exists() comes first on purpose: get() on a
+      // missing user document throws, which denies the write with a confusing
+      // error instead of a clean "no such receiver".
+      allow create: if isCallStart()
+                    && isAdmin()
+                    && exists(/databases/$(database)/documents/users/$(receiverUid))
+                    && get(/databases/$(database)/documents/users/$(receiverUid)).data.approved == true;
+
+      // Starting a call over a live document is how a new call replaces an old
+      // one. Demanding a different callId is what makes that deliberate: every
+      // in-flight write belonging to the previous call now fails against these
+      // rules instead of quietly landing on top of the new call's offer. Same
+      // authority as a start, including the receiver still being approved.
+      allow update: if isCallStart()
+                    && request.resource.data.callId != resource.data.callId
+                    && isAdmin()
+                    && exists(/databases/$(database)/documents/users/$(receiverUid))
+                    && get(/databases/$(database)/documents/users/$(receiverUid)).data.approved == true;
+
+      // Answering: the receiver itself, once only, into the call that is
+      // actually live, and only while the caller is still waiting.
+      allow update: if isSameCall()
+                    && isSelf(receiverUid)
+                    && resource.data.status == 'calling'
+                    && !resource.data.keys().hasAny(['answer'])
+                    && request.resource.data.status == 'connected';
+
+      // Ending: the admin or the receiver, but only the call currently in
+      // progress. A stale tab writing "ended" onto a newer call is rejected
+      // rather than allowed to kill someone else's ringing phone.
+      allow update: if isSameCall()
+                    && (isAdmin() || isSelf(receiverUid))
+                    && resource.data.status in ['calling', 'connected']
+                    && request.resource.data.status == 'ended';
+
+      // Deliberately NO delete. Deleting the room document is precisely what used
+      // to tear calls down: it fires every client's watcher, which closes their
+      // peer connection, and the window before the next write is long enough for
+      // a live call to die in the middle. With delete unavailable there is no
+      // longer a code path that can do it. A finished document is inert — the
+      // next startCall overwrites it, and an incoming call is only ever reported
+      // for status "calling". Resetting the room by hand therefore needs
+      // firebase firestore:delete, which uses admin credentials and bypasses
+      // these rules.
+
+      // ICE candidates from the caller. Writable only by the admin, readable
+      // by the two parties to this room. Tagged with a callId so a client can
+      // ignore candidates belonging to a call it never took part in; the
+      // rules do not police that, the client does.
+      match /callerCandidates/{candidateId} {
+        allow read: if isSelf(receiverUid) || isAdmin();
+        allow write: if isAdmin();
+      }
+
+      // ICE candidates from the receiver. Writable only by the receiver this
+      // room belongs to, readable by the two parties to this room.
+      match /receiverCandidates/{candidateId} {
+        allow read: if isSelf(receiverUid) || isAdmin();
+        allow write: if isSelf(receiverUid);
+      }
+    }
+
+    // Legacy shared signaling room.
     //
-    // The room id is hardcoded because Firestore rules cannot read env vars.
-    // Any other room id does not match this rule and falls through to deny.
+    // PHASE 1 OF 3 — left exactly as it was before the migration, on purpose.
+    // The per-receiver room above is now available, but this room is still
+    // fully writable so that a client running the OLD build keeps working
+    // unchanged. Old code and new code are therefore both valid against these
+    // rules, which is what lets the hosting deploy happen without a window in
+    // which calls cannot be placed.
+    //
+    // Do not leave it like this. Phase 2 makes it read-only, phase 3 deletes
+    // this block once every receiver tablet is confirmed reloaded onto
+    // per-receiver rooms.
+
     match /rooms/vc-ud589l6e1gq0vc4y22tp {
       // Open, because a receiver sitting idle with no session of its own has to
       // be able to see that a call is ringing. This is the direct cost of having

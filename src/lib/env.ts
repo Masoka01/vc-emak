@@ -1,12 +1,10 @@
 /**
  * Accessor env yang aman dipakai di client.
  *
- * PENTING: jangan pernah menyentuh `process.env.ADMIN_PIN` di file ini.
- * Next.js hanya meng-inline prefix `NEXT_PUBLIC_` ke bundle client; variabel
- * lain jadi `undefined` di browser, sehingga pengecekan di sini akan selalu
- * "tidak terpasang" dan membuat halaman admin salah menampilkan layar
- * "belum dikonfigurasi". Pengecekan ADMIN_PIN hanya boleh di server
- * (src/app/api/verify-pin/route.ts).
+ * Hanya variabel berawalan `NEXT_PUBLIC_` yang sampai ke browser. Akses
+ * `process.env` secara dinamis (mis. `process.env[key]`) tidak bisa di-inline
+ * Next.js, sehingga di client hasilnya selalu `undefined` — lihat catatan
+ * panjang di bawah `firebaseConfig`.
  */
 
 const FIREBASE_KEYS = [
@@ -66,9 +64,4 @@ export function missingFirebaseVars(): string[] {
 /** True hanya kalau keenam variabel Firebase terisi. */
 export function isFirebaseConfigured(): boolean {
   return missingFirebaseVars().length === 0;
-}
-
-/** ID room signaling. Default dikosongkan agar tidak ada room publik yang bocor. */
-export function getRoomId(): string {
-  return process.env.NEXT_PUBLIC_ROOM_ID || "";
 }
